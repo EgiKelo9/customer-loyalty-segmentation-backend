@@ -1,0 +1,49 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment files
+.env
+.env.*
+
+# Build and packaging
+build/
+dist/
+.eggs/
+*.egg-info/
+
+# Test and lint cache
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+logs/
+
+# Local databases
+*.sqlite3
+*.db
+
+# Scrapy runtime artifacts
+.scrapy/
+
+# Editor/OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
