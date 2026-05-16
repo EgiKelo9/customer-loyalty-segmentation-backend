@@ -1,32 +1,41 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from app.api import health
+import os
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from app.schemas.base import StandardResponse
+from app.database.main import Base, engine, create_db
+from app.middleware import cors, static
+from app.router import auth, health
 
-# Inisiasi FastAPI app
+create_db()
+Base.metadata.create_all(bind=engine)
+
 app = FastAPI(
-    title="HomeIQ API",
-    description="HomeIQ untuk AI House Price Prediction.",
-    version="1.0.0",
+    title="Customer Loyalty Segmentation API",
+    description="API untuk mengelola segmentasi loyalitas pelanggan menggunakan model machine learning.",
+    version="1.0.0"
 )
 
-# Konfigurasi CORS untuk mengizinkan frontend React (port 3000) dan domain produksi
-origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://0.0.0.0:3000",
-]
+if not os.getenv("ENV"):
+    os.environ["ENV"] = "dev"
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+cors.add(app)
+static.add(app)
 
-# Include API routers
-app.include_router(health.router, prefix="/api/health", tags=["System Check"])
+app.include_router(auth.router, prefix="/api/v1", tags=["Authentication"])
+app.include_router(health.router, prefix="/api/v1", tags=["System Check"])
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=StandardResponse(
+            code=exc.status_code,
+            error=True,
+            message=exc.detail,
+            data=None
+        ).model_dump()
+    )
 
 @app.get("/")
 def root():
-    return {"message": "Welcome to HomeIQ API. Akses /docs untuk melihat dokumentasi interaktif."}
+    return {"message": "Welcome to Customer Loyalty Segmentation API. Access /docs for API documentation."}
