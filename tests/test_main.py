@@ -1,0 +1,20 @@
+import sys
+import importlib
+
+
+def test_main_app_routes(monkeypatch):
+    import app.database.main as db_main
+
+    monkeypatch.setattr(db_main, "create_db", lambda: None)
+    monkeypatch.setattr(db_main.Base.metadata, "create_all", lambda **kwargs: None)
+
+    if "app.main" in sys.modules:
+        del sys.modules["app.main"]
+
+    main_module = importlib.import_module("app.main")
+    app = main_module.app
+    paths = {route.path for route in app.router.routes}
+
+    assert "/" in paths
+    assert "/api/v1/health/" in paths
+    assert "/api/v1/predict/lrfm" in paths
