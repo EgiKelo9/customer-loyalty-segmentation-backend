@@ -127,20 +127,23 @@ customer-loyalty-segmentation-backend/
 │   │   └── user.py               # User database model
 │   │
 │   ├── pipeline/                  # Machine learning pipeline
-│   │   ├── preprocess.py         # Data preprocessing & feature engineering
-│   │   ├── train.py              # Model training & validation
+│   │   ├── ml_service.py         # Inference new data
+│   │   ├── preprocessing.py      # Data preprocessing & feature engineering
 │   │   └── workflow.ipynb        # Jupyter notebook untuk experimentation
 │   │
 │   ├── router/                    # API route handlers
 │   │   ├── auth.py               # Authentication endpoints
-│   │   └── health.py             # Health check endpoints
+│   │   ├── health.py             # Health check endpoints
+│   │   └── predict.py            # Prediction endpoints
 │   │
 │   ├── schemas/                   # Pydantic validation models
 │   │   ├── auth.py               # Authentication request/response schemas
 │   │   ├── base.py               # Base response schema
-│   │   └── health.py             # Health check schemas
+│   │   ├── health.py             # Health check schemas
+│   │   └── predict.py            # Prediction schemas
 │   │
 │   └── shared/                    # Shared utilities
+│       ├── auth.py               # Auth dependency (Bearer token)
 │       ├── token.py              # JWT token utilities
 │       └── transaction_manager.py # Database transaction management
 │
@@ -196,14 +199,22 @@ API akan tersedia di: `http://localhost:5000`
 |--------|----------|-----------|
 | `POST` | `/api/v1/auth/register` | Register pengguna baru |
 | `POST` | `/api/v1/auth/login` | Login dan dapatkan JWT token |
-| `POST` | `/api/v1/auth/refresh` | Refresh JWT token |
+
+Catatan: Endpoint prediction membutuhkan header `Authorization: Bearer <token>`.
 
 ### System Health
 
 | Method | Endpoint | Deskripsi |
 |--------|----------|-----------|
-| `GET` | `/api/v1/health/status` | Check status aplikasi |
-| `GET` | `/api/v1/health/db` | Check database connection |
+| `GET` | `/api/v1/health/` | Check status aplikasi |
+
+### Prediction (Protected)
+
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| `POST` | `/api/v1/predict/lrfm` | Prediksi dari nilai LRFM |
+| `POST` | `/api/v1/predict/transactions` | Prediksi dari transaksi JSON (1 pelanggan) |
+| `POST` | `/api/v1/predict/transactions/upload` | Prediksi dari file CSV/Excel |
 
 ## 💻 Development
 

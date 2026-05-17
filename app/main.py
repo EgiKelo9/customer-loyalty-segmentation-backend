@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from app.schemas.base import StandardResponse
 from app.database.main import Base, engine, create_db
 from app.middleware import cors, static
-from app.router import auth, health
+from app.router import auth, health, predict
 
 create_db()
 Base.metadata.create_all(bind=engine)
@@ -23,6 +23,7 @@ static.add(app)
 
 app.include_router(auth.router, prefix="/api/v1", tags=["Authentication"])
 app.include_router(health.router, prefix="/api/v1", tags=["System Check"])
+app.include_router(predict.router, prefix="/api/v1", tags=["Prediction"])
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
