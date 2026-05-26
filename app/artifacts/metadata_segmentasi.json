@@ -1,0 +1,45 @@
+{
+    "m": 1.5,
+    "segment_map": {
+        "L↑R↓F↑M↑": "High Value Loyal Customers",
+        "L↑R↓F↑M↓": "High Value New Customers",
+        "L↑R↓F↓M↑": "Platinum Customers",
+        "L↑R↑F↑M↑": "Potential Loyal Customers",
+        "L↑R↑F↑M↓": "Potential High Frequency Customers",
+        "L↑R↑F↓M↑": "Potential Consumption Customers",
+        "L↓R↑F↑M↑": "High Value Lost Customers",
+        "L↓R↑F↑M↓": "Frequency Lost Customers",
+        "L↓R↑F↓M↑": "Consumption Lost Customers",
+        "L↓R↑F↓M↓": "Uncertain Lost Customers",
+        "L↓R↓F↑M↑": "High Value New Customers",
+        "L↓R↓F↑M↓": "Frequency Promotions Customers",
+        "L↓R↓F↓M↑": "Consumption Promotions Customers",
+        "L↓R↓F↓M↓": "Uncertain New Customers",
+        "L↑R↓F↓M↓": "High Consumption Cost Customers",
+        "L↑R↑F↓M↓": "Low Consumption Cost Customers"
+    },
+    "promo_map": {
+        "High Value Loyal Customers": "Sampling, cashback",
+        "High Value New Customers": "Buy One Get One Free, Cashback",
+        "Platinum Customers": "Cashback",
+        "Potential Loyal Customers": "Sampling, cashback",
+        "Potential High Frequency Customers": "Kupon, cashback",
+        "Potential Consumption Customers": "Buy One Get One Free",
+        "High Value Lost Customers": "Buy One Get One Free, Bonus Packs",
+        "Frequency Lost Customers": "Buy One Get One Free, Kupon",
+        "Consumption Lost Customers": "Bonus Packs, Kupon",
+        "Uncertain Lost Customers": "Kupon, Bonus Packs",
+        "Frequency Promotions Customers": "Price Off Deals, cashback",
+        "Consumption Promotions Customers": "Cashback",
+        "Uncertain New Customers": "Kupon, Buy One Get One Free",
+        "High Consumption Cost Customers": "Bonus Packs",
+        "Low Consumption Cost Customers": "Bonus Packs, Kupon"
+    },
+    "cluster_pola_map": {
+        "0": "L↓R↑F↓M↓",
+        "1": "L↓R↓F↓M↓",
+        "2": "L↑R↓F↑M↑",
+        "3": "L↓R↑F↓M↓",
+        "4": "L↓R↑F↓M↑"
+    }
+}
