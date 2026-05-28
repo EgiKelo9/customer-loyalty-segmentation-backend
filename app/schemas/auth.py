@@ -16,5 +16,7 @@ class UserLoginRequest(BaseModel):
     password: str
 
 class UserLoginResponse(BaseModel):
+    name: str
+    email: EmailStr
     access_token: str
     token_type: str
