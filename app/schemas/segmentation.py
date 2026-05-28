@@ -19,16 +19,16 @@ class LRFMCalculated(BaseModel):
     F: float
     M: float
 
-class PredictionResponse(BaseModel):
+class SegmentationResponse(BaseModel):
     customer_id: Optional[str] = None
     cluster: int
-    pola: str
-    segmen: str
-    rekomendasi: str
+    pattern: str
+    segment: str
+    recommendation: str
     fuzzy_membership: Dict[str, str]
     lrfm_calculated: Optional[LRFMCalculated] = None
 
-class BatchPredictionResponse(BaseModel):
+class BatchSegmentationResponse(BaseModel):
     status: str
-    total_pelanggan: int
-    data: List[PredictionResponse]
+    total_customers: int
+    data: List[SegmentationResponse]

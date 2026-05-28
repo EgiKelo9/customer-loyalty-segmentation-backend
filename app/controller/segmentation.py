@@ -2,30 +2,31 @@ import io
 import pandas as pd
 from typing import List, Union
 from fastapi import HTTPException, UploadFile
-from app.pipeline.ml_service import predict_single
+from app.pipeline.ml_service import segment_single
+from app.schemas.base import StandardResponse
 from app.pipeline.preprocessing import auto_map_columns, extract_lrfm
-from app.schemas.predict import (
-	BatchPredictionResponse,
+from app.schemas.segmentation import (
+	BatchSegmentationResponse,
 	CustomerInput,
 	LRFMCalculated,
-	PredictionResponse,
+	SegmentationResponse,
 	TransactionInput,
 )
 
 
-def _build_prediction(row: pd.Series) -> PredictionResponse:
-	result = predict_single(
+def _build_segmentation_response(row: pd.Series) -> SegmentationResponse:
+	result = segment_single(
 		l=float(row["Length"]),
 		r=float(row["Recency"]),
 		f=float(row["Frequency"]),
 		m=float(row["Monetary"]),
 	)
-	return PredictionResponse(
+	return SegmentationResponse(
 		customer_id=str(row.get("customer_id", "")),
 		cluster=result["cluster"],
-		pola=result["pola"],
-		segmen=result["segmen"],
-		rekomendasi=result["rekomendasi"],
+		pattern=result["pattern"],
+		segment=result["segment"],
+		recommendation=result["recommendation"],
 		fuzzy_membership=result["fuzzy_membership"],
 		lrfm_calculated=LRFMCalculated(
 			L=float(row["Length"]),
@@ -54,28 +55,28 @@ def _parse_uploaded_file(file: UploadFile, contents: bytes) -> pd.DataFrame:
 	)
 
 
-async def predict_from_lrfm(customer: CustomerInput) -> PredictionResponse:
+async def segment_from_lrfm(customer: CustomerInput) -> SegmentationResponse:
 	try:
-		result = predict_single(
+		result = segment_single(
 			l=customer.L,
 			r=customer.R,
 			f=customer.F,
 			m=customer.M,
 		)
-		return PredictionResponse(
+		return SegmentationResponse(
 			cluster=result["cluster"],
-			pola=result["pola"],
-			segmen=result["segmen"],
-			rekomendasi=result["rekomendasi"],
+			pattern=result["pattern"],
+			segment=result["segment"],
+			recommendation=result["recommendation"],
 			fuzzy_membership=result["fuzzy_membership"],
 		)
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-async def predict_from_transactions(
+async def segment_from_transactions(
 	transactions: List[TransactionInput],
-) -> PredictionResponse:
+) -> SegmentationResponse:
 	try:
 		if not transactions:
 			raise HTTPException(status_code=400, detail="Data transaksi tidak boleh kosong.")
@@ -95,7 +96,13 @@ async def predict_from_transactions(
 		df_mapped = auto_map_columns(df_raw)
 		df_lrfm = extract_lrfm(df_mapped)
 
-		return _build_prediction(df_lrfm.iloc[0])
+		segmentation_response = _build_segmentation_response(df_lrfm.iloc[0])
+		return StandardResponse(
+			code=200,
+			error=False,
+			message="Segmentation successful for single customer",
+			data=segmentation_response,
+		)
 	except HTTPException:
 		raise
 	except ValueError as exc:
@@ -104,9 +111,9 @@ async def predict_from_transactions(
 		raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-async def predict_from_file(
+async def segment_from_file(
 	file: UploadFile,
-) -> Union[PredictionResponse, BatchPredictionResponse]:
+) -> Union[SegmentationResponse, BatchSegmentationResponse]:
 	try:
 		contents = await file.read()
 		df_raw = _parse_uploaded_file(file, contents)
@@ -118,13 +125,24 @@ async def predict_from_file(
 		df_lrfm = extract_lrfm(df_mapped)
 
 		if len(df_lrfm) == 1:
-			return _build_prediction(df_lrfm.iloc[0])
+			segmentation_response = _build_segmentation_response(df_lrfm.iloc[0])
+			return StandardResponse(
+				code=200,
+				error=False,
+				message="Segmentation successful for customer in uploaded file",
+				data=segmentation_response,
+			)
 
-		results = [_build_prediction(row) for _, row in df_lrfm.iterrows()]
-		return BatchPredictionResponse(
-			status="success",
-			total_pelanggan=len(results),
-			data=results,
+		results = [_build_segmentation_response(row) for _, row in df_lrfm.iterrows()]
+		return StandardResponse(
+			code=200,
+			error=False,
+			message="Segmentation successful for customers in uploaded file",
+			data=BatchSegmentationResponse(
+				status="success",
+				total_customers=len(results),
+				data=results,
+			),
 		)
 	except HTTPException:
 		raise
