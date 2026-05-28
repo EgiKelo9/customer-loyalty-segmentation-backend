@@ -192,4 +192,4 @@ def extract_lrfm(
         reference_date - lrfm_df["Last_Transaction"]
     ).dt.days
 
-    return lrfm_df[["customer_id", "Length", "Recency", "Frequency", "Monetary"]]
+    return lrfm_df[["customer_id", "First_Transaction", "Length", "Recency", "Frequency", "Monetary"]]
