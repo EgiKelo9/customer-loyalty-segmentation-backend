@@ -29,6 +29,10 @@ dist/
 .coverage.*
 htmlcov/
 
+# static files
+static/dataset/*
+!static/dataset/.gitkeep
+
 # Jupyter
 .ipynb_checkpoints/
 

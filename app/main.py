@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from app.schemas.base import StandardResponse
 from app.database.main import Base, engine, create_db
 from app.middleware import cors, static
+
 from app.router import auth, health, segmentation, analytics
 
 create_db()
