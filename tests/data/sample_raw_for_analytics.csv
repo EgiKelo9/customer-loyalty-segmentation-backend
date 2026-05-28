@@ -1,0 +1,4 @@
+order_ID,user_ID,sku_ID,order_date,order_time,quantity,final_unit_price
+o1,u1,sku1,2018-03-01,2018-03-01 09:00:00,1,100.0
+o2,u2,sku2,2018-03-01,2018-03-01 10:00:00,2,50.0
+o3,u1,sku3,2018-02-28,2018-02-28 12:00:00,1,200.0

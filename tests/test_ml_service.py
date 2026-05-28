@@ -19,7 +19,7 @@ def run_case(name: str, fn):
         failed += 1
 
 try:
-    from app.pipeline.ml_service import predict_single, scaler, fcm_centers, metadata, CLUSTER_POLA_MAP
+    from app.pipeline.ml_service import segment_single, scaler, fcm_centers, metadata, CLUSTER_POLA_MAP
     MODEL_AVAILABLE = True
 except RuntimeError as e:
     MODEL_AVAILABLE = False
@@ -57,59 +57,59 @@ def test_cluster_pola_map_format():
         assert "M" in pola, f"Pola '{pola}' harus ada M"
 
 def test_predict_output_keys():
-    result = predict_single(l=25, r=3, f=10, m=1500000)
-    for key in ["cluster", "pola", "segmen", "rekomendasi", "fuzzy_membership"]:
+    result = segment_single(l=25, r=3, f=10, m=1500000)
+    for key in ["cluster", "pattern", "segment", "recommendation", "fuzzy_membership"]:
         assert key in result, f"Key '{key}' tidak ada di output"
 
 def test_predict_cluster_valid():
-    result = predict_single(l=25, r=3, f=10, m=1500000)
+    result = segment_single(l=25, r=3, f=10, m=1500000)
     n_clusters = fcm_centers.shape[0]
     assert 0 <= result["cluster"] < n_clusters
 
 def test_predict_membership_count():
-    result = predict_single(l=25, r=3, f=10, m=1500000)
+    result = segment_single(l=25, r=3, f=10, m=1500000)
     n_clusters = fcm_centers.shape[0]
     assert len(result["fuzzy_membership"]) == n_clusters
 
 def test_predict_membership_sums_100():
-    result = predict_single(l=25, r=3, f=10, m=1500000)
+    result = segment_single(l=25, r=3, f=10, m=1500000)
     total = sum(
         float(v.replace("%", ""))
         for v in result["fuzzy_membership"].values()
     )
     assert abs(total - 100.0) < 0.1, f"Total membership {total:.2f}% bukan 100%"
 
-def test_predict_pola_from_map():
+def test_predict_pattern_from_map():
     # Pola harus berasal dari cluster_pola_map, bukan dihitung ulang
-    result = predict_single(l=25, r=3, f=10, m=1500000)
+    result = segment_single(l=25, r=3, f=10, m=1500000)
     cluster_id = str(result["cluster"])
-    expected_pola = CLUSTER_POLA_MAP.get(cluster_id)
-    assert result["pola"] == expected_pola, (
-        f"Pola '{result['pola']}' tidak sesuai cluster_pola_map '{expected_pola}'"
+    expected_pattern = CLUSTER_POLA_MAP.get(cluster_id)
+    assert result["pattern"] == expected_pattern, (
+        f"Pattern '{result['pattern']}' tidak sesuai cluster_pola_map '{expected_pattern}'"
     )
 
-def test_predict_segmen_not_unknown():
-    result = predict_single(l=25, r=3, f=10, m=1500000)
-    assert result["segmen"] != "Segmen tidak diketahui", (
+def test_predict_segment_not_unknown():
+    result = segment_single(l=25, r=3, f=10, m=1500000)
+    assert result["segment"] != "Segmen tidak diketahui", (
         f"Segmen 'Unknown' — cek cluster_pola_map & segment_map"
     )
 
 def test_predict_minimum_values():
     # Nilai minimum tidak boleh error
-    result = predict_single(l=0, r=1, f=1, m=1)
+    result = segment_single(l=0, r=1, f=1, m=1)
     assert "cluster" in result
 
 def test_predict_large_values():
     # Nilai ekstrem besar tidak boleh error
-    result = predict_single(l=3650, r=1, f=500, m=999_999_999)
+    result = segment_single(l=3650, r=1, f=500, m=999_999_999)
     assert "cluster" in result
 
 def test_predict_deterministic():
     # Hasil harus sama kalau input sama
-    r1 = predict_single(l=30, r=5, f=8, m=750000)
-    r2 = predict_single(l=30, r=5, f=8, m=750000)
+    r1 = segment_single(l=30, r=5, f=8, m=750000)
+    r2 = segment_single(l=30, r=5, f=8, m=750000)
     assert r1["cluster"] == r2["cluster"]
-    assert r1["pola"] == r2["pola"]
+    assert r1["pattern"] == r2["pattern"]
 
 def test_missing_model_files_raises(monkeypatch):
     import importlib.util
