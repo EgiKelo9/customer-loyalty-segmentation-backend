@@ -54,3 +54,12 @@ async def login(user: UserLoginRequest, db: Session):
         message="Login successful",
         data=UserLoginResponse(access_token=token, token_type="bearer")
     )
+
+
+async def logout(current_user: dict):
+    return StandardResponse(
+        code=200,
+        error=False,
+        message="Logout successful",
+        data={"user_id": current_user.get("user_id")}
+    )

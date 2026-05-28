@@ -4,7 +4,8 @@ from fastapi import Depends, APIRouter
 from app.database.main import get_db
 from app.schemas.base import StandardResponse
 from app.schemas.auth import UserRegisterRequest, UserRegisterResponse, UserLoginRequest, UserLoginResponse
-from app.controller.auth import register, login
+from app.controller.auth import register, login, logout
+from app.shared.auth import get_current_user
 
 router = APIRouter(prefix="/auth")
 
@@ -30,4 +31,14 @@ async def register_user(user: UserRegisterRequest, db: Session = Depends(get_db)
 )
 async def login_user(user: UserLoginRequest, db: Session = Depends(get_db)):
     return await login(user, db)
+
+@router.post(
+    "/logout",
+    response_model=StandardResponse[Dict[str, Any]],
+    responses={
+        401: {"model": StandardResponse[dict], "description": "Unauthorized"}
+    }
+)
+async def logout_user(current_user: dict = Depends(get_current_user)):
+    return await logout(current_user)
     
