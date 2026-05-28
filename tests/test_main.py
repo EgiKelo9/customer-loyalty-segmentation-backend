@@ -17,4 +17,11 @@ def test_main_app_routes(monkeypatch):
 
     assert "/" in paths
     assert "/api/v1/health/" in paths
-    assert "/api/v1/predict/lrfm" in paths
+    assert "/api/v1/auth/register" in paths
+    assert "/api/v1/auth/login" in paths
+    assert "/api/v1/segmentation/lrfm" in paths
+    assert "/api/v1/segmentation/transactions" in paths
+    assert "/api/v1/segmentation/transactions/upload" in paths
+    assert "/api/v1/analytics/kpi" in paths
+    assert "/api/v1/analytics/charts" in paths
+    assert "/api/v1/analytics/customers" in paths

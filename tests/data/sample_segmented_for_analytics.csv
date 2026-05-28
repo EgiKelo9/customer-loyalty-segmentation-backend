@@ -1,0 +1,3 @@
+customer_id,Length,Recency,Frequency,Monetary,Cluster,Segment,Pattern,Recommendation
+u1,30,1,2,300.0,1,TestSegment,PatternA,RecA
+u2,10,5,1,100.0,2,TestSegmentB,PatternB,RecB
