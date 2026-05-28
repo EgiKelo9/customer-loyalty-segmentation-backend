@@ -29,7 +29,7 @@ except FileNotFoundError as e:
         f"fcm_centers.joblib, metadata_segmentasi.json"
     )
 
-def predict_single(l: float, r: float, f: float, m: float) -> dict:
+def segment_single(l: float, r: float, f: float, m: float) -> dict:
     """
     Prediksi segmen loyalitas untuk 1 pelanggan.
 
@@ -37,8 +37,8 @@ def predict_single(l: float, r: float, f: float, m: float) -> dict:
     1. Log1p transform (sesuai preprocessing notebook)
     2. StandardScaler transform
     3. FCM predict → dapat cluster_id & fuzzy membership
-    4. Lookup pola dari cluster_pola_map (sudah fix dari training)
-    5. Lookup segmen & rekomendasi dari metadata
+    4. Lookup pattern dari cluster_pola_map (sudah fix dari training)
+    5. Lookup segment & recommendation dari metadata
 
     Args:
         l: Length  - hari antara transaksi pertama & terakhir
@@ -78,17 +78,17 @@ def predict_single(l: float, r: float, f: float, m: float) -> dict:
     cluster_id = int(np.argmax(probs))
 
     # 4. Lookup pattern dari cluster_pola_map
-    pola = CLUSTER_POLA_MAP.get(str(cluster_id), "Tidak diketahui")
+    pattern = CLUSTER_POLA_MAP.get(str(cluster_id), "Tidak diketahui")
 
-    # 5. Lookup segmen & rekomendasi
-    segmen = SEGMENT_MAP.get(pola, "Segmen tidak diketahui")
-    rekomendasi = PROMO_MAP.get(segmen, "Tidak ada rekomendasi")
+    # 5. Lookup segment & recommendation
+    segment = SEGMENT_MAP.get(pattern, "Segmen tidak diketahui")
+    recommendation = PROMO_MAP.get(segment, "Tidak ada rekomendasi")
 
     return {
         "cluster": cluster_id,
-        "pola": pola,
-        "segmen": segmen,
-        "rekomendasi": rekomendasi,
+        "pattern": pattern,
+        "segment": segment,
+        "recommendation": recommendation,
         "fuzzy_membership": {
             f"Cluster {i}": f"{p * 100:.2f}%"
             for i, p in enumerate(probs)
