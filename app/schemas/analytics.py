@@ -24,6 +24,7 @@ class PaginationMetadata(BaseModel):
     perPage: int
     totalPage: int
     totalData: int
+    allSegments: List[str]
 
 class KPIResponse(BaseModel):
     status: str = "success"

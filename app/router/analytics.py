@@ -67,5 +67,6 @@ async def customers_endpoint(
     page: int = Query(1, ge=1, description="Nomor halaman untuk paginasi"),
     per_page: int = Query(10, ge=1, le=100, description="Jumlah data per halaman"),
     search: Optional[str] = Query(None, description="Pencarian ID pelanggan"),
+    segment: Optional[str] = Query(None, description="Filter berdasarkan segmen pelanggan")
 ):
-    return await get_customer_data_list(page=page, per_page=per_page, search=search)
+    return await get_customer_data_list(page=page, per_page=per_page, search=search, segment=segment)

@@ -241,14 +241,21 @@ async def get_customer_chart_data(
 async def get_customer_data_list(
     page: int = 1,
     per_page: int = 10,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    segment: Optional[str] = None
 ) -> CustomerDataResponse:
     try:
         df = _load_dataset(SEGMENTED_DATASET_PATH)
+        segments = df["Segment"].unique().tolist() if "Segment" in df.columns else []
             
         # Apply Search Query (Assuming search targets customer_id)
         if search:
             df = df[df["customer_id"].astype(str).str.contains(search, case=False, na=False)]
+        
+        # Apply Segment Filter
+        if segment:
+            if segment.lower() != 'all':
+                df = df[df["Segment"].str.lower() == segment.lower()]
         
         # Konfigurasi Paginasi
         total_data = len(df)
@@ -291,7 +298,8 @@ async def get_customer_data_list(
             currentPage=page,
             perPage=per_page,
             totalPage=total_page,
-            totalData=total_data
+            totalData=total_data,
+            allSegments=segments
         )
             
         return StandardResponse(
