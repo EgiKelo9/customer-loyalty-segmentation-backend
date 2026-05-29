@@ -17,7 +17,7 @@ from app.shared.auth import get_current_user
 router = APIRouter(prefix="/analytics", dependencies=[Depends(get_current_user)])
 
 @router.get(
-    "/kpi",
+    "/kpis",
     response_model=StandardResponse[KPIResponse],
     responses={
         422: {"model": StandardResponse[Dict[str, Any]], "description": "Validation Error"},
@@ -65,5 +65,7 @@ async def chart_endpoint(
 )
 async def customers_endpoint(
     page: int = Query(1, ge=1, description="Nomor halaman untuk paginasi"),
+    per_page: int = Query(10, ge=1, le=100, description="Jumlah data per halaman"),
+    search: Optional[str] = Query(None, description="Pencarian ID pelanggan"),
 ):
-    return await get_customer_data_list(page=page)
+    return await get_customer_data_list(page=page, per_page=per_page, search=search)

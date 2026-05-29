@@ -60,6 +60,7 @@ async def get_kpis(target_date: Optional[date] = None) -> KPIResponse:
         # Validasi target tanggal, fallback ke hari ini jika tidak ada
         if target_date is None:
             target_date = os.getenv("MAX_DATE", "2018-03-31")
+            target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
             
         previous_date = target_date - timedelta(days=1)
         
@@ -172,20 +173,20 @@ async def get_customer_chart_data(
             start_dt = target_dt_start
             end_dt = target_dt_end
             freq = "1h"
-            label_fmt = "%Y-%m-%d %H:%M"
+            label_fmt = "%H:%M"
         elif date_range == "this month":
             month_start = target_date.replace(day=1)
             start_dt = datetime.combine(max(min_date, month_start), datetime.min.time())
             end_dt = target_dt_end
             freq = "1D"
-            label_fmt = "%Y-%m-%d"
+            label_fmt = "%d %b"
         else:
             # default / last 7 days, tidak boleh melewati min_date_env
             start_7 = target_date - timedelta(days=6)
             start_dt = datetime.combine(max(min_date, start_7), datetime.min.time())
             end_dt = target_dt_end
             freq = "6h"
-            label_fmt = "%Y-%m-%d %H:%M"
+            label_fmt = "%d %b %H:%M"
 
         # Filter range
         df_range = df[(df["order_ts"] >= start_dt) & (df["order_ts"] <= end_dt)].copy()
@@ -237,12 +238,19 @@ async def get_customer_chart_data(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-async def get_customer_data_list(page: int) -> CustomerDataResponse:
+async def get_customer_data_list(
+    page: int = 1,
+    per_page: int = 10,
+    search: Optional[str] = None
+) -> CustomerDataResponse:
     try:
         df = _load_dataset(SEGMENTED_DATASET_PATH)
+            
+        # Apply Search Query (Assuming search targets customer_id)
+        if search:
+            df = df[df["customer_id"].astype(str).str.contains(search, case=False, na=False)]
         
-        # Konfigurasi Paginasi (per_page dikunci senilai 10)
-        per_page = 10
+        # Konfigurasi Paginasi
         total_data = len(df)
         total_page = math.ceil(total_data / per_page) if total_data > 0 else 1
         
