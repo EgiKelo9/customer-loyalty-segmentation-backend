@@ -120,7 +120,12 @@ def test_register_user_duplicate_email(monkeypatch):
 
 
 def test_login_user_success(monkeypatch):
-    existing_user = SimpleNamespace(id=7, check_password=lambda password: True)
+    existing_user = SimpleNamespace(
+        id=7,
+        name="Alice",
+        email="alice@example.com",
+        check_password=lambda password: True,
+    )
     monkeypatch.setattr(auth_controller, "Token", lambda: FakeToken())
 
     user = UserLoginRequest(email="Alice@Example.com", password="secret")
