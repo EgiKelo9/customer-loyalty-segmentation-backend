@@ -32,3 +32,25 @@ class BatchSegmentationResponse(BaseModel):
     status: str
     total_customers: int
     data: List[SegmentationResponse]
+    
+class ClusterAggregated(BaseModel):
+    id: str
+    name: str
+    userCount: int
+    avgRecency: float
+    avgFrequency: float
+    avgMonetary: float
+    color: str
+    description: str
+
+class ScatterDataPoint(BaseModel):
+    customer_id: str
+    recency: float
+    frequency: float
+    monetary: float
+    clusterId: str
+
+class DistributionResponse(BaseModel):
+    segments: List[ClusterAggregated]
+    allSegmentData: List[ClusterAggregated]
+    scatterData: List[ScatterDataPoint]
