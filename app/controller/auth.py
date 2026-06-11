@@ -63,3 +63,26 @@ async def logout(current_user: dict):
         message="Logout successful",
         data={"user_id": current_user.get("user_id")}
     )
+
+
+async def me(current_user: dict, db: Session):
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token payload"
+        )
+
+    user = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    return StandardResponse(
+        code=200,
+        error=False,
+        message="User retrieved successfully",
+        data=user
+    )

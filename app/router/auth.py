@@ -4,7 +4,7 @@ from fastapi import Depends, APIRouter
 from app.database.main import get_db
 from app.schemas.base import StandardResponse
 from app.schemas.auth import UserRegisterRequest, UserRegisterResponse, UserLoginRequest, UserLoginResponse
-from app.controller.auth import register, login, logout
+from app.controller.auth import register, login, logout, me
 from app.shared.auth import get_current_user
 
 router = APIRouter(prefix="/auth")
@@ -41,4 +41,19 @@ async def login_user(user: UserLoginRequest, db: Session = Depends(get_db)):
 )
 async def logout_user(current_user: dict = Depends(get_current_user)):
     return await logout(current_user)
+
+
+@router.get(
+    "/me",
+    response_model=StandardResponse[UserRegisterResponse],
+    responses={
+        401: {"model": StandardResponse[dict], "description": "Unauthorized"},
+        404: {"model": StandardResponse[dict], "description": "Not Found"}
+    }
+)
+async def get_me(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return await me(current_user, db)
     
