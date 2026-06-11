@@ -167,7 +167,9 @@ def extract_lrfm(
     df_clean = clean_data(df)
 
     df_clean["transaction_date"] = pd.to_datetime(
-        df_clean["transaction_date"], errors="coerce"
+        df_clean["transaction_date"],
+        format='mixed',
+        errors='coerce'
     )
     df_clean = df_clean.dropna(subset=["transaction_date"])
 
