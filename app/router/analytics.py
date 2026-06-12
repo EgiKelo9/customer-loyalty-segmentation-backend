@@ -1,17 +1,21 @@
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
 from datetime import date
 from typing import Any, Dict, Literal, Optional
 from app.controller.analytics import (
     get_kpis,
     get_customer_chart_data,
-    get_customer_data_list
+    get_customer_data_list,
+    get_segment_trends
 )
 from app.schemas.analytics import (
     ChartDataResponse,
     CustomerDataResponse,
-    KPIResponse
+    KPIResponse,
+    SegmentTrendResponse,
 )
 from app.schemas.base import StandardResponse
+from app.database.main import get_db
 from app.shared.auth import get_current_user
 
 router = APIRouter(prefix="/analytics", dependencies=[Depends(get_current_user)])
@@ -20,18 +24,16 @@ router = APIRouter(prefix="/analytics", dependencies=[Depends(get_current_user)]
     "/kpis",
     response_model=StandardResponse[KPIResponse],
     responses={
-        422: {"model": StandardResponse[Dict[str, Any]], "description": "Validation Error"},
-        401: {"model": StandardResponse[dict], "description": "Unauthorized"}
+        401: {"model": StandardResponse[dict], "description": "Unauthorized"},
+        500: {"model": StandardResponse[dict], "description": "Internal Server Error"}
     },
-    summary="Mendapatkan ringkasan KPI dan tren harian berdasarkan tanggal acuan",
+    summary="Dapatkan ringkasan metrik profil pelanggan",
 )
 async def kpi_endpoint(
-    target_date: Optional[date] = Query(
-        None, 
-        description="Tanggal acuan untuk menghitung tren harian (Format: YYYY-MM-DD)"
-    )
-):
-    return await get_kpis(target_date=target_date)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> StandardResponse[KPIResponse]:
+    return await get_kpis(db, current_user)
 
 @router.get(
     "/charts",
@@ -57,16 +59,28 @@ async def chart_endpoint(
 @router.get(
     "/customers",
     response_model=StandardResponse[CustomerDataResponse],
-    responses={
-        422: {"model": StandardResponse[Dict[str, Any]], "description": "Validation Error"},
-        401: {"model": StandardResponse[dict], "description": "Unauthorized"}
-    },
-    summary="Mendapatkan daftar pelanggan beserta segmentasinya",
+    summary="Get customer data list with pagination and filters",
 )
-async def customers_endpoint(
-    page: int = Query(1, ge=1, description="Nomor halaman untuk paginasi"),
-    per_page: int = Query(10, ge=1, le=100, description="Jumlah data per halaman"),
-    search: Optional[str] = Query(None, description="Pencarian ID pelanggan"),
-    segment: Optional[str] = Query(None, description="Filter berdasarkan segmen pelanggan")
-):
-    return await get_customer_data_list(page=page, per_page=per_page, search=search, segment=segment)
+async def get_customers(
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(10, ge=1, le=100, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search by Customer ID"),
+    segment: Optional[str] = Query(None, description="Filter by Segment name"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> StandardResponse[CustomerDataResponse]:
+    # Pass db and current_user to the controller
+    return await get_customer_data_list(page, per_page, search, segment, db, current_user)
+
+@router.get(
+    "/segment-trends",
+    response_model=StandardResponse[SegmentTrendResponse],
+    summary="Get aggregated segment trends over a specific date range",
+)
+async def get_segment_trends_route(
+    start_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
+    end_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> StandardResponse[SegmentTrendResponse]:
+    return await get_segment_trends(db, start_date, end_date, current_user)
