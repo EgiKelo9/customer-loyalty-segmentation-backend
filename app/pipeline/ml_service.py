@@ -29,6 +29,17 @@ except FileNotFoundError as e:
         f"fcm_centers.joblib, metadata_segmentasi.json"
     )
 
+PROMO_KEYWORD_MAP = {
+    "sampling": "sampling",
+    "cashback": "cashback",
+    "buy one get one free": "bogo",
+    "buy one get one": "bogo",
+    "price off deals": "price_off",
+    "price off": "price_off",
+    "bonus packs": "bonus_packs",
+    "kupon": "kupon",
+}
+
 def segment_single(l: float, r: float, f: float, m: float) -> dict:
     """
     Prediksi segmen loyalitas untuk 1 pelanggan.
@@ -77,6 +88,10 @@ def segment_single(l: float, r: float, f: float, m: float) -> dict:
     probs = u[:, 0]
     cluster_id = int(np.argmax(probs))
 
+    def get_segment_name(idx: int) -> str:
+        pat = CLUSTER_POLA_MAP.get(str(idx), "Tidak diketahui")
+        return SEGMENT_MAP.get(pat, f"Cluster {idx}")
+
     # 4. Lookup pattern dari cluster_pola_map
     pattern = CLUSTER_POLA_MAP.get(str(cluster_id), "Tidak diketahui")
 
@@ -84,13 +99,16 @@ def segment_single(l: float, r: float, f: float, m: float) -> dict:
     segment = SEGMENT_MAP.get(pattern, "Segmen tidak diketahui")
     recommendation = PROMO_MAP.get(segment, "Tidak ada rekomendasi")
 
+    # fuzzy_membership: string version for display (backward compat)
+    fuzzy_membership_str = {
+        get_segment_name(i): f"{p * 100:.2f}%"
+        for i, p in enumerate(probs)
+    }
+
     return {
         "cluster": cluster_id,
         "pattern": pattern,
         "segment": segment,
         "recommendation": recommendation,
-        "fuzzy_membership": {
-            f"Cluster {i}": f"{p * 100:.2f}%"
-            for i, p in enumerate(probs)
-        },
+        "fuzzy_membership": fuzzy_membership_str,
     }
