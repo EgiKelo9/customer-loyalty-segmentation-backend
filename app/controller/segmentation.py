@@ -4,6 +4,7 @@ import uuid
 import numpy as np
 import pandas as pd
 from typing import List, Optional, Union
+from datetime import date, datetime, timezone
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -47,28 +48,35 @@ def _persist_results(
     source: str,
     batch_id: str,
     lrfm_override: Optional[LRFMCalculated] = None,
+    transaction_dates: Optional[List[Optional[date]]] = None,
 ) -> None:
-	if db is None or user_id is None:
-		return
-
-	transaction_manager = TransactionManager(db)
-	with transaction_manager.transaction() as session:
-		for result in results:
-			lrfm_data = _serialize_lrfm(lrfm_override or result.lrfm_calculated)
-			session.add(
-				SegmentationResult(
-					user_id=user_id,
-     				batch_id=batch_id,
-					customer_id=result.customer_id,
-					cluster=result.cluster,
-					pattern=result.pattern,
-					segment=result.segment,
-					recommendation=result.recommendation,
-					fuzzy_membership=result.fuzzy_membership,
-					lrfm=lrfm_data,
-					source=source,
-				)
-			)
+    if db is None or user_id is None:
+        return
+ 
+    transaction_manager = TransactionManager(db)
+    with transaction_manager.transaction() as session:
+        for i, result in enumerate(results):
+            lrfm_data = _serialize_lrfm(lrfm_override or result.lrfm_calculated)
+ 
+            tx_date = None
+            if transaction_dates is not None and i < len(transaction_dates):
+                tx_date = transaction_dates[i]
+ 
+            session.add(
+                SegmentationResult(
+                    user_id=user_id,
+                    batch_id=batch_id,
+                    customer_id=result.customer_id,
+                    cluster=result.cluster,
+                    pattern=result.pattern,
+                    segment=result.segment,
+                    recommendation=result.recommendation,
+                    fuzzy_membership=result.fuzzy_membership,
+                    lrfm=lrfm_data,
+                    source=source,
+                    transaction_date=tx_date,
+                )
+            )
 
 
 def _build_segmentation_response(row: pd.Series) -> SegmentationResponse:
@@ -174,7 +182,19 @@ async def segment_from_transactions(
 		segmentation_response = _build_segmentation_response(df_lrfm.iloc[0])
 		user_id = current_user.get("user_id") if current_user else None
 		batch_id = str(uuid.uuid4())
-		_persist_results(db, user_id, [segmentation_response], "transactions", batch_id)
+  
+		tx_date = None
+		date_col = next((c for c in df_mapped.columns if "date" in c.lower()), None)
+		if date_col:
+			parsed = pd.to_datetime(df_mapped[date_col], errors="coerce")
+			if not parsed.isna().all():
+				tx_date = parsed.max().date()
+
+		_persist_results(
+			db, user_id, [segmentation_response], "transactions", batch_id,
+			transaction_dates=[tx_date],
+		)
+
 		return StandardResponse(
 			code=200,
 			error=False,
@@ -208,18 +228,26 @@ async def segment_from_file(
 		user_id = current_user.get("user_id") if current_user else None
 		batch_id = str(uuid.uuid4())
 
-		if len(df_lrfm) == 1:
-			segmentation_response = _build_segmentation_response(df_lrfm.iloc[0])
-			_persist_results(db, user_id, [segmentation_response], "file", batch_id)
-			return StandardResponse(
-				code=200,
-				error=False,
-				message="Segmentation successful for customer in uploaded file",
-				data=segmentation_response,
-			)
+		date_col = next((c for c in df_mapped.columns if "date" in c.lower()), None)
+
+		if date_col and "customer_id" in df_mapped.columns:
+			df_mapped["_parsed_date"] = pd.to_datetime(df_mapped[date_col], errors="coerce")
+			date_per_cust = df_mapped.groupby("customer_id")["_parsed_date"].max()
+			tx_dates = [
+				date_per_cust.get(str(row.get("customer_id")), pd.NaT)
+				for _, row in df_lrfm.iterrows()
+			]
+			tx_dates = [d.date() if pd.notna(d) else None for d in tx_dates]
+		elif date_col:
+			# tidak ada customer_id, pakai max global
+			parsed = pd.to_datetime(df_mapped[date_col], errors="coerce")
+			global_max = parsed.max()
+			tx_dates = [global_max.date() if pd.notna(global_max) else None] * len(df_lrfm)
+		else:
+			tx_dates = [None] * len(df_lrfm)
 
 		results = [_build_segmentation_response(row) for _, row in df_lrfm.iterrows()]
-		_persist_results(db, user_id, results, "file", batch_id)
+		_persist_results(db, user_id, results, "file", batch_id, transaction_dates=tx_dates)
 		
 		return StandardResponse(
 			code=200,
@@ -240,34 +268,63 @@ async def segment_from_file(
 		raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-async def get_segment_distribution() -> StandardResponse[DistributionResponse]:
+async def get_segment_distribution(
+    current_user: dict,
+    db: Session
+) -> StandardResponse[DistributionResponse]:
 	try:
-		if not os.path.exists(SEGMENTED_DATASET_PATH):
-			raise HTTPException(status_code=404, detail="Segmented dataset not found.")
+		# 1. Load static dataset
+		df_static = pd.DataFrame()
+		if os.path.exists(SEGMENTED_DATASET_PATH):
+			df_static = pd.read_csv(SEGMENTED_DATASET_PATH)
+			df_static["customer_id"] = df_static["customer_id"].astype(str)
 
-		df = pd.read_csv(SEGMENTED_DATASET_PATH)
-		if df.empty:
-			raise HTTPException(status_code=400, detail="Segmented dataset is empty.")
+		# 2. Fetch dynamic inference dataset from DB
+		user_id = current_user.get("user_id")
+		db_results = db.query(SegmentationResult).filter(SegmentationResult.user_id == user_id).all()
+		
+		db_rows = []
+		for item in db_results:
+			if item.lrfm:
+				db_rows.append({
+					"customer_id": str(item.customer_id) if item.customer_id else f"db-anon-{item.id}",
+					"Length": float(item.lrfm.get("L", 0)),
+					"Recency": float(item.lrfm.get("R", 0)),
+					"Frequency": float(item.lrfm.get("F", 0)),
+					"Monetary": float(item.lrfm.get("M", 0)),
+					"Cluster": int(item.cluster),
+					"Segment": str(item.segment)
+				})
+		df_db = pd.DataFrame(db_rows)
+		if not df_db.empty:
+			df_db["customer_id"] = df_db["customer_id"].astype(str)
+
+		# 3. Combine for ACCURATE TABLE METRICS (All 400k+ data points)
+		if not df_static.empty and not df_db.empty:
+			df_combined = pd.concat([df_db, df_static], ignore_index=True)
+			df_combined = df_combined.drop_duplicates(subset=["customer_id"], keep="first")
+		elif not df_db.empty:
+			df_combined = df_db
+		elif not df_static.empty:
+			df_combined = df_static
+		else:
+			raise HTTPException(status_code=400, detail="No data available for distribution.")
 
 		max_frequency_threshold = 10
-		df = df[df["Frequency"] <= max_frequency_threshold]
-		if df.empty:
+		df_full = df_combined[df_combined["Frequency"] <= max_frequency_threshold]
+		
+		if df_full.empty:
 			raise HTTPException(status_code=400, detail="No data available after filtering high frequency outliers.")
 
-		agg_df = df.groupby(["Cluster", "Segment"]).agg({
+		# 4. Calculate aggregate metrics per segment
+		agg_df = df_full.groupby(["Cluster", "Segment"]).agg({
 			"customer_id": "count",
 			"Recency": "mean",
 			"Frequency": "mean",
 			"Monetary": "mean",
 		}).reset_index()
 
-		cluster_colors = {
-			0: "#ef4444",
-			1: "#eab308",
-			2: "#22c55e",
-			3: "#3b82f6",
-			4: "#a855f7",
-		}
+		cluster_colors = {0: "#ef4444", 1: "#eab308", 2: "#22c55e", 3: "#3b82f6", 4: "#a855f7"}
 
 		segments = []
 		for _, row in agg_df.iterrows():
@@ -281,52 +338,66 @@ async def get_segment_distribution() -> StandardResponse[DistributionResponse]:
 					avgFrequency=float(row["Frequency"]),
 					avgMonetary=float(row["Monetary"]),
 					color=cluster_colors.get(cluster_val, "#94a3b8"),
-					description=(
-						f"Customers belonging to the {row['Segment']} segment based on their transaction behavior."
-					),
+					description=f"Customers belonging to the {row['Segment']} segment based on their transaction behavior."
 				)
 			)
 
 		all_segment = ClusterAggregated(
 			id="all",
 			name="All Customers",
-			userCount=len(df),
-			avgRecency=float(df["Recency"].mean()),
-			avgFrequency=float(df["Frequency"].mean()),
-			avgMonetary=float(df["Monetary"].mean()),
+			userCount=len(df_full),
+			avgRecency=float(df_full["Recency"].mean()),
+			avgFrequency=float(df_full["Frequency"].mean()),
+			avgMonetary=float(df_full["Monetary"].mean()),
 			color="#18181b",
-			description="Global overview containing all segmented customers.",
+			description="Global overview containing all segmented customers."
 		)
 
 		all_segment_data = [all_segment] + segments
+
+		# 5. Prepare scatter data with sampling to max 1000 points for performance
 		target_sample_size = 1000
-		total_rows = len(df)
+		
+		# Filter the separate datasets
+		df_db_filtered = df_db[df_db["Frequency"] <= max_frequency_threshold] if not df_db.empty else pd.DataFrame()
+		df_static_filtered = df_static[df_static["Frequency"] <= max_frequency_threshold] if not df_static.empty else pd.DataFrame()
+		
+		# Remove DB duplicates from static pool
+		if not df_db_filtered.empty and not df_static_filtered.empty:
+			df_static_filtered = df_static_filtered[~df_static_filtered["customer_id"].isin(df_db_filtered["customer_id"])]
 
-		if total_rows <= target_sample_size:
-			df_sampled = df.copy()
-		else:
-			fraction = target_sample_size / total_rows
-			df_sampled = df.groupby("Cluster", group_keys=False).apply(
-				lambda x: x.sample(frac=fraction, random_state=42)
-			).copy()
+		# Rule 1: Always include 100% of the live inferred DB data
+		df_scatter_parts = [df_db_filtered] if not df_db_filtered.empty else []
+		current_db_count = len(df_db_filtered)
 
-		jitter_r = np.random.uniform(-0.4, 0.4, size=len(df_sampled))
-		jitter_f = np.random.uniform(-0.3, 0.3, size=len(df_sampled))
+		# Rule 2: Fill the remaining slots with random data from the 400k static set
+		remaining_slots = max(0, target_sample_size - current_db_count)
+		
+		if remaining_slots > 0 and not df_static_filtered.empty:
+			if len(df_static_filtered) <= remaining_slots:
+				df_scatter_parts.append(df_static_filtered.copy())
+			else:
+				fraction = remaining_slots / len(df_static_filtered)
+				df_static_sampled = df_static_filtered.groupby("Cluster", group_keys=False).apply(
+					lambda x: x.sample(frac=fraction, random_state=42)
+				).copy()
+				df_scatter_parts.append(df_static_sampled)
+
+		# Combine them
+		df_scatter = pd.concat(df_scatter_parts, ignore_index=True) if df_scatter_parts else pd.DataFrame()
+
+		jitter_r = np.random.uniform(-0.4, 0.4, size=len(df_scatter))
+		jitter_f = np.random.uniform(-0.3, 0.3, size=len(df_scatter))
 
 		scatter_data = []
-		for i, (_, row) in enumerate(df_sampled.iterrows()):
-			jittered_recency = max(0.1, float(row["Recency"]) + jitter_r[i])
-			jittered_frequency = max(0.1, float(row["Frequency"]) + jitter_f[i])
-
-			scatter_data.append(
-				ScatterDataPoint(
-					customer_id=str(row["customer_id"]),
-					recency=jittered_recency,
-					frequency=jittered_frequency,
-					monetary=float(row["Monetary"]),
-					clusterId=str(row["Cluster"]),
-				)
-			)
+		for i, (_, row) in enumerate(df_scatter.iterrows()):
+			scatter_data.append(ScatterDataPoint(
+				customer_id=str(row["customer_id"]),
+				recency=max(0.1, float(row["Recency"]) + jitter_r[i]),
+				frequency=max(0.1, float(row["Frequency"]) + jitter_f[i]),
+				monetary=float(row["Monetary"]),
+				clusterId=str(row["Cluster"]),
+			))
 
 		return StandardResponse(
 			code=200,

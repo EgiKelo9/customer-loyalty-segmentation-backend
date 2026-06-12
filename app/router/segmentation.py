@@ -104,9 +104,9 @@ async def segment_from_file(
 )
 async def get_segment_distribution(
 	current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> StandardResponse[DistributionResponse]:
-	return await get_segment_distribution_controller()
-
+	return await get_segment_distribution_controller(current_user, db)
 
 @router.get(
 	"/history",

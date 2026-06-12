@@ -36,12 +36,13 @@ CREATE TABLE segmentation_results (
     fuzzy_membership  JSONB NOT NULL,
     lrfm              JSONB NULL,
     source            VARCHAR(50) NOT NULL,
-    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    transaction_date  DATE NULL,
 );
 
 CREATE INDEX idx_segmentation_results_user_id ON segmentation_results(user_id);
 CREATE INDEX idx_segmentation_results_created_at ON segmentation_results(created_at);
-
+CREATE INDEX idx_segmentation_results_transaction_date ON segmentation_results(transaction_date);
 -- ============================================================
 -- DUMMY DATA SEEDING
 -- ============================================================

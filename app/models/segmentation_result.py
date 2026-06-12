@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Date
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.database.main import Base
@@ -23,3 +23,4 @@ class SegmentationResult(Base):
     applied_config = Column(JSONB, nullable=True)
     source = Column(String, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    transaction_date = Column(Date, nullable=True, index=True)

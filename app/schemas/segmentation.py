@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel
 
@@ -7,6 +7,7 @@ class CustomerInput(BaseModel):
     R: float
     F: float
     M: float
+    transaction_date: Optional[date] = None
 
 class TransactionInput(BaseModel):
     customer_id: str
