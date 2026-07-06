@@ -46,7 +46,7 @@ def segment_single(l: float, r: float, f: float, m: float) -> dict:
 
     Alur:
     1. Log1p transform (sesuai preprocessing notebook)
-    2. StandardScaler transform
+    2. MinMax Scaler transform
     3. FCM predict → dapat cluster_id & fuzzy membership
     4. Lookup pattern dari cluster_pola_map (sudah fix dari training)
     5. Lookup segment & recommendation dari metadata
@@ -63,7 +63,7 @@ def segment_single(l: float, r: float, f: float, m: float) -> dict:
     # 1. Log1p transform
     features_log = np.array([[
         np.log1p(l),
-        np.log1p(r),
+        np.log1p(np.maximum(r, 0)),
         np.log1p(f),
         np.log1p(m),
     ]])
