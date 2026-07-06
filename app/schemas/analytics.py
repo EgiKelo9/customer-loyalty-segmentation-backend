@@ -1,10 +1,10 @@
 from datetime import date
-from typing import List
+from typing import List, Dict, Any, Union
 from pydantic import BaseModel
 
 class KeyPerformanceIndicator(BaseModel):
     title: str
-    value: float
+    value: Union[float, str]
     trend: float
     
 class CustomerChartData(BaseModel):
@@ -38,3 +38,7 @@ class CustomerDataResponse(BaseModel):
     status: str = "success"
     metadata: PaginationMetadata
     data: List[CustomerData]
+
+class SegmentTrendResponse(BaseModel):
+    data: List[Dict[str, Any]]
+    segments: List[str]

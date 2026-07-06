@@ -5,7 +5,7 @@ from app.schemas.base import StandardResponse
 from app.database.main import Base, engine, create_db
 from app.middleware import cors, static
 
-from app.router import auth, health, segmentation, analytics
+from app.router import auth, health, segmentation, analytics, promo
 
 create_db()
 Base.metadata.create_all(bind=engine)
@@ -26,6 +26,7 @@ app.include_router(auth.router, prefix="/api/v1", tags=["Authentication"])
 app.include_router(analytics.router, prefix="/api/v1", tags=["Analytics"])
 app.include_router(segmentation.router, prefix="/api/v1", tags=["Segmentation"])
 app.include_router(health.router, prefix="/api/v1", tags=["System Check"])
+app.include_router(promo.router, prefix="/api/v1", tags=["Promo"])
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
