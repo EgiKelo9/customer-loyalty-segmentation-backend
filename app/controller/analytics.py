@@ -495,7 +495,7 @@ async def get_segment_trends(
             date_format = "%b %Y"
  
         # 6. Agregasi: GROUP BY period & segment → pivot
-        df["period"] = df["date"].dt.to_period(freq).dt.start_time
+        df["period"] = df["date"].dt.floor(freq)
         grouped = df.groupby(["period", "segment"]).size().reset_index(name="count")
  
         pivot_df = (
