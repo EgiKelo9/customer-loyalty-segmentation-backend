@@ -16,7 +16,8 @@
         "L↓R↓F↓M↑": "Consumption Promotions Customers",
         "L↓R↓F↓M↓": "Uncertain New Customers",
         "L↑R↓F↓M↓": "High Consumption Cost Customers",
-        "L↑R↑F↓M↓": "Low Consumption Cost Customers"
+        "L↑R↑F↓M↓": "Low Consumption Cost Customers",
+        "L↓R↑F↓M↓_v2": "Dormant Lost Customers"
     },
     "promo_map": {
         "High Value Loyal Customers": "Sampling, cashback",
@@ -37,9 +38,8 @@
     },
     "cluster_pola_map": {
         "0": "L↓R↑F↓M↓",
-        "1": "L↓R↓F↓M↓",
-        "2": "L↑R↓F↑M↑",
-        "3": "L↓R↑F↓M↓",
-        "4": "L↓R↑F↓M↑"
+        "1": "L↑R↓F↓M↑",
+        "2": "L↓R↑F↓M↓_v2",
+        "3": "L↑R↓F↑M↑"
     }
 }

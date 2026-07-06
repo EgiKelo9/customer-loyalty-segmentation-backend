@@ -57,13 +57,16 @@ def test_segment_from_lrfm_success(monkeypatch):
     customer = CustomerInput(L=12, R=4, F=3, M=1_500_000)
     response = run(segmentation_controller.segment_from_lrfm(customer))
 
-    assert response.customer_id is None
-    assert response.cluster == 2
-    assert response.pattern == "L↑R↓F↑M↑"
-    assert response.segment == "Champions"
-    assert response.recommendation == "Maintain engagement with premium offers"
-    assert response.fuzzy_membership == {"0": "5.00%", "1": "15.00%", "2": "80.00%"}
-    assert response.lrfm_calculated is None
+    assert response.code == 200
+    assert response.error is False
+    assert response.message == "Segmentation successful for LRFM input"
+    assert response.data.customer_id is None
+    assert response.data.cluster == 2
+    assert response.data.pattern == "L↑R↓F↑M↑"
+    assert response.data.segment == "Champions"
+    assert response.data.recommendation == "Maintain engagement with premium offers"
+    assert response.data.fuzzy_membership == {"0": "5.00%", "1": "15.00%", "2": "80.00%"}
+    assert response.data.lrfm_calculated is None
 
 
 def test_segment_from_transactions_success(monkeypatch):

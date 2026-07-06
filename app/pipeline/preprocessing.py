@@ -177,7 +177,7 @@ def extract_lrfm(
         raise ValueError("Tidak ada tanggal transaksi yang valid.")
 
     if reference_date is None:
-        reference_date = FIXED_REFERENCE_DATE
+        reference_date = df_clean["transaction_date"].max() + pd.Timedelta(days=1)
 
     lrfm_df = df_clean.groupby("customer_id").agg(
         First_Transaction=("transaction_date", "min"),

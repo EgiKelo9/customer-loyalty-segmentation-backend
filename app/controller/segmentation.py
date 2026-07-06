@@ -231,7 +231,7 @@ async def segment_from_file(
 		date_col = next((c for c in df_mapped.columns if "date" in c.lower()), None)
 
 		if date_col and "customer_id" in df_mapped.columns:
-			df_mapped["_parsed_date"] = pd.to_datetime(df_mapped[date_col], errors="coerce")
+			df_mapped["_parsed_date"] = pd.to_datetime(df_mapped[date_col], format='mixed', errors="coerce")
 			date_per_cust = df_mapped.groupby("customer_id")["_parsed_date"].max()
 			tx_dates = [
 				date_per_cust.get(str(row.get("customer_id")), pd.NaT)
@@ -324,7 +324,12 @@ async def get_segment_distribution(
 			"Monetary": "mean",
 		}).reset_index()
 
-		cluster_colors = {0: "#ef4444", 1: "#eab308", 2: "#22c55e", 3: "#3b82f6", 4: "#a855f7"}
+		cluster_colors = {
+			0: "#ef4444",  # Uncertain Lost Customers
+			1: "#06b6d4",  # Platinum Customers
+			2: "#f97316",  # Dormant Lost Customers
+			3: "#22c55e",  # High Value Loyal Customers
+		}
 
 		segments = []
 		for _, row in agg_df.iterrows():
