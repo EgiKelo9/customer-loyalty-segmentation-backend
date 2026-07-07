@@ -37,7 +37,7 @@ CREATE TABLE segmentation_results (
     lrfm              JSONB NULL,
     source            VARCHAR(50) NOT NULL,
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    transaction_date  DATE NULL,
+    transaction_date  DATE NULL
 );
 
 CREATE INDEX idx_segmentation_results_user_id ON segmentation_results(user_id);
