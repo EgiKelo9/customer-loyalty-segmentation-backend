@@ -326,7 +326,11 @@ async def get_customer_data_list(
         else:
             df = df_static
 
-        segments = df["Segment"].unique().tolist() if "Segment" in df.columns else []
+        if "Segment" in df.columns:
+            segments = df["Segment"].fillna("").astype(str).unique().tolist()
+            segments = [s for s in segments if s != ""] 
+        else:
+            segments = []
             
         # 4. Apply Search Query
         if search:
