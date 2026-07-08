@@ -84,10 +84,9 @@ async def get_kpis(db: Session = None, current_user: dict = None) -> StandardRes
 
         # 2. Ambil Dataset Statis (CSV JD.com)
         df_static = pd.DataFrame()
-        segmented_path = os.path.join(os.getcwd(), "static", "dataset", "segmented_data.csv")
         
-        if os.path.exists(segmented_path):
-            df_static = pd.read_csv(segmented_path)
+        if os.path.exists(SEGMENTED_DATASET_PATH):
+            df_static = pd.read_csv(SEGMENTED_DATASET_PATH)
             if not df_static.empty:
                 df_static["customer_id"] = df_static["customer_id"].astype(str)
 

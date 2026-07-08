@@ -138,7 +138,6 @@ async def segment_from_lrfm(
 			segment=result["segment"],
 			recommendation=result["recommendation"],
 			fuzzy_membership=result["fuzzy_membership"],
-			fuzzy_membership_raw=result["fuzzy_membership_raw"],
 		)
 		user_id = current_user.get("user_id") if current_user else None
 		batch_id = str(uuid.uuid4())
@@ -249,6 +248,16 @@ async def segment_from_file(
 		results = [_build_segmentation_response(row) for _, row in df_lrfm.iterrows()]
 		_persist_results(db, user_id, results, "file", batch_id, transaction_dates=tx_dates)
 		
+		if len(results) == 1:
+			segmentation_response = results[0]
+			segmentation_response.batch_id = batch_id
+			return StandardResponse(
+				code=200,
+				error=False,
+				message="Segmentation successful for customer in uploaded file",
+				data=segmentation_response,
+			)
+
 		return StandardResponse(
 			code=200,
 			error=False,

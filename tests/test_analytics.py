@@ -19,16 +19,14 @@ def setup_module(module):
 
 
 def test_get_kpis_basic():
-    resp = asyncio.run(analytics.get_kpis(target_date=date(2018, 3, 1)))
+    resp = asyncio.run(analytics.get_kpis())
     assert resp.code == 200
     assert resp.error is False
     kpis = resp.data.data
-    # convert to dict by title
     values = {k.title: k.value for k in kpis}
-    # revenue from sample: 100 + (2*50) = 200
-    assert abs(values.get("Daily Revenue", 0) - 200.0) < 0.01
-    assert int(values.get("Daily Active Customers", 0)) == 2
-    assert abs(values.get("Average Orders", 0) - 1.0) < 0.01
+    assert int(values.get("Total Pelanggan Tersegmen", 0)) == 2
+    assert abs(values.get("Rata-rata Nilai Pelanggan (M)", 0) - 200.0) < 0.01
+    assert values.get("Segmen Paling Dominan") == "TestSegment"
 
 
 def test_get_customer_chart_today():
