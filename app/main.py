@@ -7,7 +7,11 @@ from app.middleware import cors, static
 
 from app.router import auth, health, segmentation, analytics, promo
 
-create_db()
+if not os.getenv("ENV"):
+    os.environ["ENV"] = "dev"
+
+if os.getenv("ENV") == "dev":
+    create_db()
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -15,9 +19,6 @@ app = FastAPI(
     description="API untuk mengelola segmentasi loyalitas pelanggan menggunakan model machine learning.",
     version="1.0.0"
 )
-
-if not os.getenv("ENV"):
-    os.environ["ENV"] = "dev"
 
 cors.add(app)
 static.add(app)
