@@ -27,7 +27,7 @@ async def get_promo_metadata():
 
 # ENDPOINT 1: Create or Update promo config for a cluster (Upsert)
 @router.post(
-    "/",
+    "",
     response_model=StandardResponse[Dict[str, Any]],
     summary="Create or Update a Campaign Configuration"
 )
@@ -64,7 +64,7 @@ async def get_promo_by_cluster(
     return await get_promo_by_cluster_logic(cluster_id, db)
 
 # ENDPOINT 4: Hapus promo config berdasarkan ID
-@router.delete("/promo/{promo_id}")
+@router.delete("/{promo_id}")
 async def delete_promo_config(
     promo_id: int,
     db: Session = Depends(get_db),

@@ -27,3 +27,8 @@ def test_main_app_routes(monkeypatch):
     assert "/api/v1/analytics/kpis" in paths
     assert "/api/v1/analytics/charts" in paths
     assert "/api/v1/analytics/customers" in paths
+    assert "/api/v1/promo" in paths
+    assert "/api/v1/promo/metadata" in paths
+    assert "/api/v1/promo/active" in paths
+    assert "/api/v1/promo/cluster/{cluster_id}" in paths
+    assert "/api/v1/promo/{promo_id}" in paths
