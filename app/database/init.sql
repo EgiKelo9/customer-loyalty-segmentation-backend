@@ -28,6 +28,7 @@ CREATE TABLE users (
 CREATE TABLE segmentation_results (
     id                SERIAL PRIMARY KEY,
     user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    batch_id          VARCHAR(255) NULL,
     customer_id       VARCHAR(100) NULL,
     cluster           INTEGER NOT NULL,
     pattern           VARCHAR(50) NOT NULL,
@@ -35,12 +36,15 @@ CREATE TABLE segmentation_results (
     recommendation    TEXT NOT NULL,
     fuzzy_membership  JSONB NOT NULL,
     lrfm              JSONB NULL,
+    applied_config_id INTEGER NULL,
+    applied_config    JSONB NULL,
     source            VARCHAR(50) NOT NULL,
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     transaction_date  DATE NULL
 );
 
 CREATE INDEX idx_segmentation_results_user_id ON segmentation_results(user_id);
+CREATE INDEX idx_segmentation_results_batch_id ON segmentation_results(batch_id);
 CREATE INDEX idx_segmentation_results_created_at ON segmentation_results(created_at);
 CREATE INDEX idx_segmentation_results_transaction_date ON segmentation_results(transaction_date);
 -- ============================================================
