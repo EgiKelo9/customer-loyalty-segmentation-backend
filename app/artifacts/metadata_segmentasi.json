@@ -34,7 +34,8 @@
         "Consumption Promotions Customers": "Cashback",
         "Uncertain New Customers": "Kupon, Buy One Get One Free",
         "High Consumption Cost Customers": "Bonus Packs",
-        "Low Consumption Cost Customers": "Bonus Packs, Kupon"
+        "Low Consumption Cost Customers": "Bonus Packs, Kupon",
+        "Dormant Lost Customers": "Kupon, Bonus Packs"
     },
     "cluster_pola_map": {
         "0": "L↓R↑F↓M↓",

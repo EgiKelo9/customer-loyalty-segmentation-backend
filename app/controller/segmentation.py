@@ -1,14 +1,16 @@
 import io
 import os
 import uuid
+import json
 import numpy as np
 import pandas as pd
 from typing import List, Optional, Union
 from datetime import date, datetime, timezone
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException, UploadFile, BackgroundTasks
+from app.database.main import SessionLocal
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from app.pipeline.ml_service import segment_single
+from app.pipeline.ml_service import segment_single, segment_batch
 from app.schemas.base import StandardResponse
 from app.pipeline.preprocessing import auto_map_columns, extract_lrfm
 from app.schemas.segmentation import (
@@ -120,6 +122,115 @@ def _parse_uploaded_file(file: UploadFile, contents: bytes) -> pd.DataFrame:
 	)
 
 
+def process_file_background(
+    contents: bytes, 
+    filename: str, 
+    mapping_str: str, 
+    batch_id: str, 
+    user_id: Optional[int]
+):
+    """
+    Fungsi worker ini berjalan di background thread setelah response HTTP dikembalikan.
+    Menggunakan Vectorized Batch Prediction dan Bulk Insert untuk performa maksimal.
+    """
+    db = SessionLocal()
+    try:
+        # 1. Parse File
+        ext = filename.split(".")[-1].lower()
+        if ext == "csv":
+            df_raw = pd.read_csv(io.BytesIO(contents))
+        elif ext in {"xlsx", "xls"}:
+            df_raw = pd.read_excel(io.BytesIO(contents))
+        else:
+            print(f"Format tidak didukung: {ext}")
+            return
+
+        # 2. Proses Mapping dari Frontend
+        if mapping_str:
+            mapping_dict = json.loads(mapping_str)
+            rename_rules = {v: k for k, v in mapping_dict.items() if v}
+            df_raw = df_raw.rename(columns=rename_rules)
+            
+            required_cols = [c for c in ["customer_id", "transaction_date", "invoice_id", "amount"] if c in df_raw.columns]
+            df_mapped = df_raw[required_cols].copy()
+        else:
+            df_mapped = auto_map_columns(df_raw)
+
+        # 3. Ekstrak LRFM
+        df_lrfm = extract_lrfm(df_mapped)
+
+        # 4. Handle Tanggal Transaksi (Dioptimasi tanpa iterrows)
+        date_col = next((c for c in df_mapped.columns if "date" in c.lower()), None)
+        if date_col and "customer_id" in df_mapped.columns:
+            df_mapped["_parsed_date"] = pd.to_datetime(df_mapped[date_col], format='mixed', errors="coerce")
+            date_per_cust = df_mapped.groupby("customer_id")["_parsed_date"].max()
+            
+            # Ekstrak tanggal massal dengan Pandas map (hitungan milidetik)
+            if 'customer_id' in df_lrfm.columns:
+                cust_ids = df_lrfm['customer_id'].astype(str)
+            else:
+                cust_ids = df_lrfm.index.astype(str)
+                
+            tx_dates_raw = cust_ids.map(date_per_cust)
+            tx_dates = [d.date() if pd.notna(d) else None for d in tx_dates_raw]
+            
+        elif date_col:
+            parsed = pd.to_datetime(df_mapped[date_col], errors="coerce")
+            global_max = parsed.max()
+            tx_dates = [global_max.date() if pd.notna(global_max) else None] * len(df_lrfm)
+        else:
+            tx_dates = [None] * len(df_lrfm)
+
+        # 5. ML INFERENCE BATCH (Vectorized - Super Cepat)
+        print(f"Mulai Prediksi Batch untuk {len(df_lrfm)} baris...")
+        df_results = segment_batch(df_lrfm)
+        
+        # 6. PERSIAPAN DATA UNTUK BULK INSERT
+        print("Menyiapkan Bulk Insert Database...")
+        db_records = []
+        
+        records_dict = df_results.reset_index().to_dict('records') 
+        
+        for i, row in enumerate(records_dict):
+            cust_id = str(row.get('customer_id', row.get('index', ''))) 
+            tx_date = tx_dates[i] if (tx_dates and i < len(tx_dates)) else None
+            
+            lrfm_data = {
+                "L": float(row['Length']),
+                "R": float(row['Recency']),
+                "F": float(row['Frequency']),
+                "M": float(row['Monetary'])
+            }
+            
+            db_records.append(
+                SegmentationResult(
+                    user_id=user_id,
+                    batch_id=batch_id,
+                    customer_id=cust_id,
+                    cluster=int(row['cluster']),
+                    pattern=str(row['pattern']),
+                    segment=str(row['segment']),
+                    recommendation=str(row['recommendation']),
+                    fuzzy_membership=row['fuzzy_membership'],
+                    lrfm=lrfm_data,
+                    source="file",
+                    transaction_date=tx_date,
+                )
+            )
+
+        # 7. bulk insert to db
+        print(f"Menyimpan {len(db_records)} data ke Database...")
+        db.bulk_save_objects(db_records)
+        db.commit() 
+        print(f"Batch {batch_id} SELESAI TOTAL!")
+
+    except Exception as exc:
+        print(f"Error pada background task {batch_id}: {exc}")
+        db.rollback()
+    finally:
+        db.close()
+        
+        
 async def segment_from_lrfm(
 	customer: CustomerInput,
 	db: Optional[Session] = None,
@@ -212,60 +323,44 @@ async def segment_from_transactions(
 
 async def segment_from_file(
 	file: UploadFile,
-	db: Optional[Session] = None,
+	mapping: Optional[str] = None, 
+    background_tasks: BackgroundTasks = None,
+    db: Optional[Session] = None,
 	current_user: Optional[dict] = None,
-) -> Union[SegmentationResponse, BatchSegmentationResponse]:
-	try:
-		contents = await file.read()
-		df_raw = _parse_uploaded_file(file, contents)
+) -> StandardResponse[dict]:
+    try:
+        contents = await file.read()
+        
+        user_id = current_user.get("user_id") if current_user else None
+        batch_id = str(uuid.uuid4())
 
-		if df_raw.empty:
-			raise HTTPException(status_code=400, detail="File kosong atau tidak bisa dibaca.")
+        # Lempar proses file mentahnya ke fungsi background di atas
+        if background_tasks:
+            background_tasks.add_task(
+                process_file_background,
+                contents=contents,
+                filename=file.filename,
+                mapping_str=mapping,
+                batch_id=batch_id,
+                user_id=user_id
+            )
 
-		df_mapped = auto_map_columns(df_raw)
-		df_lrfm = extract_lrfm(df_mapped)
-
-		user_id = current_user.get("user_id") if current_user else None
-		batch_id = str(uuid.uuid4())
-
-		date_col = next((c for c in df_mapped.columns if "date" in c.lower()), None)
-
-		if date_col and "customer_id" in df_mapped.columns:
-			df_mapped["_parsed_date"] = pd.to_datetime(df_mapped[date_col], format='mixed', errors="coerce")
-			date_per_cust = df_mapped.groupby("customer_id")["_parsed_date"].max()
-			tx_dates = [
-				date_per_cust.get(str(row.get("customer_id")), pd.NaT)
-				for _, row in df_lrfm.iterrows()
-			]
-			tx_dates = [d.date() if pd.notna(d) else None for d in tx_dates]
-		elif date_col:
-			# tidak ada customer_id, pakai max global
-			parsed = pd.to_datetime(df_mapped[date_col], errors="coerce")
-			global_max = parsed.max()
-			tx_dates = [global_max.date() if pd.notna(global_max) else None] * len(df_lrfm)
-		else:
-			tx_dates = [None] * len(df_lrfm)
-
-		results = [_build_segmentation_response(row) for _, row in df_lrfm.iterrows()]
-		_persist_results(db, user_id, results, "file", batch_id, transaction_dates=tx_dates)
-		
-		return StandardResponse(
-			code=200,
-			error=False,
-			message="Segmentation successful for customers in uploaded file",
-			data=BatchSegmentationResponse(
-				status="success",
-				total_customers=len(results),
-    			batch_id=batch_id,
-				data=results,
-			),
-		)
-	except HTTPException:
-		raise
-	except ValueError as exc:
-		raise HTTPException(status_code=422, detail=str(exc)) from exc
-	except Exception as exc:
-		raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # Langsung balas sukses tanpa perlu nunggu komputasi selesai
+        return StandardResponse(
+            code=202,
+            error=False,
+            message="Data file sebesar itu diterima! Sistem sedang memproses segmen pelanggan di latar belakang.",
+            data={
+                "batch_id": batch_id,
+                "status": "processing"
+            }
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 async def get_segment_distribution(
@@ -496,7 +591,11 @@ async def get_segmentation_history_batches(
     )
     
 async def get_segmentation_history_by_batch_id(
-    batch_id: str, current_user: dict, db: Session
+    batch_id: str, 
+    current_user: dict, 
+    db: Session,
+    limit: int = 500,
+    skip: int = 0
 ) -> StandardResponse[List[SegmentationHistoryItem]]:
     user_id = current_user.get("user_id")
     if not user_id:
@@ -507,6 +606,8 @@ async def get_segmentation_history_by_batch_id(
         .filter(SegmentationResult.user_id == user_id)
         .filter(SegmentationResult.batch_id == batch_id)
         .order_by(SegmentationResult.created_at.desc())
+        .offset(skip)
+        .limit(limit)
     )
     
     items = [
@@ -524,3 +625,37 @@ async def get_segmentation_history_by_batch_id(
         ) for item in query.all()
     ]
     return StandardResponse(code=200, error=False, message="Batch detail fetched successfully", data=items)
+
+async def get_customer_detail_in_batch_controller(
+    batch_id: str, customer_id: str, current_user: dict, db: Session
+) -> StandardResponse[SegmentationHistoryItem]:
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Cari spesifik 1 pelanggan di dalam batch tersebut
+    item = (
+        db.query(SegmentationResult)
+        .filter(SegmentationResult.user_id == user_id)
+        .filter(SegmentationResult.batch_id == batch_id)
+        .filter(SegmentationResult.customer_id == customer_id)
+        .first()
+    )
+    
+    if not item:
+        raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan di dalam batch ini.")
+        
+    result = SegmentationHistoryItem(
+        id=item.id,
+        customer_id=item.customer_id,
+        cluster=item.cluster,
+        pattern=item.pattern,
+        segment=item.segment,
+        recommendation=item.recommendation,
+        fuzzy_membership=item.fuzzy_membership,
+        lrfm_calculated=(LRFMCalculated(**item.lrfm) if item.lrfm else None),
+        source=item.source,
+        created_at=item.created_at,
+    )
+    
+    return StandardResponse(code=200, error=False, message="Detail fetched successfully", data=result)

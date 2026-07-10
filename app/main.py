@@ -7,8 +7,12 @@ from app.middleware import cors, static
 
 from app.router import auth, health, segmentation, analytics, promo
 
-create_db()
-Base.metadata.create_all(bind=engine)
+if not os.getenv("ENV"):
+    os.environ["ENV"] = "dev"
+
+# if os.getenv("ENV") == "dev":
+#     create_db()
+# Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Customer Loyalty Segmentation API",

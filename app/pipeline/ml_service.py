@@ -112,3 +112,63 @@ def segment_single(l: float, r: float, f: float, m: float) -> dict:
         "recommendation": recommendation,
         "fuzzy_membership": fuzzy_membership_str,
     }
+
+
+def segment_batch(df_lrfm: pd.DataFrame) -> pd.DataFrame:
+    """
+    Prediksi segmen untuk ratusan ribu pelanggan sekaligus (Vectorized).
+    """
+    # 1. Ekstrak kolom sebagai Numpy Array (Sangat Cepat)
+    l = df_lrfm['Length'].values
+    r = np.maximum(df_lrfm['Recency'].values, 0)
+    f = df_lrfm['Frequency'].values
+    m = df_lrfm['Monetary'].values
+
+    # 2. Log1p Transform sekaligus ke seluruh baris
+    features_log = np.column_stack([np.log1p(l), np.log1p(r), np.log1p(f), np.log1p(m)])
+    
+    features_df = pd.DataFrame(features_log, columns=["length", "recency", "frequency", "monetary"])
+
+    # 3. Scaling sekaligus
+    features_scaled = scaler.transform(features_df).T
+
+    # 4. Prediksi FCM sekaligus (Numpy akan bekerja maksimal di sini)
+    u, _, _, _, _, _ = fuzz.cluster.cmeans_predict(
+        test_data=features_scaled,
+        cntr_trained=fcm_centers,
+        m=M_PARAM,
+        error=0.005,
+        maxiter=1000,
+    )
+
+    # probs bentuknya (n_clusters, n_samples). Kita ubah (transpose) biar per baris
+    probs = u.T 
+    cluster_ids = np.argmax(probs, axis=1)
+
+    # 5. Mapping massal menggunakan List Comprehension (Jauh lebih cepat dari apply pandas)
+    patterns = [CLUSTER_POLA_MAP.get(str(cid), "Tidak diketahui") for cid in cluster_ids]
+    segments = [SEGMENT_MAP.get(pat, "Segmen tidak diketahui") for pat in patterns]
+    recs = [PROMO_MAP.get(seg, "Tidak ada rekomendasi") for seg in segments]
+
+    # Helper function nama segmen (persis seperti fungsi lu sebelumnya)
+    def get_segment_name(idx: int) -> str:
+        pat = CLUSTER_POLA_MAP.get(str(idx), "Tidak diketahui")
+        return SEGMENT_MAP.get(pat, f"Cluster {idx}")
+        
+    cluster_names = [get_segment_name(i) for i in range(probs.shape[1])]
+    
+    # Bikin kamus fuzzy membership massal
+    fuzzy_memberships = [
+        {name: f"{p * 100:.2f}%" for name, p in zip(cluster_names, row_probs)}
+        for row_probs in probs
+    ]
+
+    # 6. Kembalikan data lengkap ke DataFrame
+    df_out = df_lrfm.copy()
+    df_out['cluster'] = cluster_ids
+    df_out['pattern'] = patterns
+    df_out['segment'] = segments
+    df_out['recommendation'] = recs
+    df_out['fuzzy_membership'] = fuzzy_memberships
+    
+    return df_out
