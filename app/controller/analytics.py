@@ -1,8 +1,8 @@
 import os
 import math
-import calendar
 import pandas as pd
-from sqlalchemy import func, and_
+from sqlalchemy import select, func, cast, Float, distinct, text
+from sqlalchemy.dialects.postgresql import JSONB
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal, Optional
@@ -23,6 +23,44 @@ from app.models.segmentation_result import SegmentationResult
 
 RAW_DATASET_PATH = os.path.join(os.getcwd(), "static", "dataset", "raw_data.csv")
 SEGMENTED_DATASET_PATH = os.path.join(os.getcwd(), "static", "dataset", "segmented_data.csv")
+
+_STATIC_SEGMENTED_DF: Optional[pd.DataFrame] = None
+_STATIC_RAW_DF: Optional[pd.DataFrame] = None
+
+def _get_static_segmented_df() -> pd.DataFrame:
+    global _STATIC_SEGMENTED_DF
+    if _STATIC_SEGMENTED_DF is None:
+        if os.path.exists(SEGMENTED_DATASET_PATH):
+            df = pd.read_csv(SEGMENTED_DATASET_PATH)
+            if not df.empty:
+                df["customer_id"] = df["customer_id"].astype(str)
+                # Bersihkan NaN sekali di sini, bukan berulang kali di tiap fungsi
+                for col in ["Frequency", "Monetary", "Length", "Recency"]:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+                if "Segment" in df.columns:
+                    df["Segment"] = df["Segment"].fillna("Unknown").astype(str)
+            _STATIC_SEGMENTED_DF = df
+        else:
+            _STATIC_SEGMENTED_DF = pd.DataFrame(
+                columns=["customer_id", "Segment", "Frequency", "Monetary", "Length", "Recency"]
+            )
+    return _STATIC_SEGMENTED_DF.copy()
+
+
+def _get_static_raw_df() -> pd.DataFrame:
+    global _STATIC_RAW_DF
+    if _STATIC_RAW_DF is None:
+        _STATIC_RAW_DF = _load_dataset(RAW_DATASET_PATH)
+    return _STATIC_RAW_DF.copy()
+
+
+def invalidate_static_cache():
+    """Panggil ini kalau file CSV statis diganti/diupdate saat runtime."""
+    global _STATIC_SEGMENTED_DF, _STATIC_RAW_DF
+    _STATIC_SEGMENTED_DF = None
+    _STATIC_RAW_DF = None
+
 
 def _load_dataset(dataset_path: str) -> pd.DataFrame:
     """Helper untuk membaca file dataset statis."""
@@ -61,38 +99,40 @@ async def get_kpis(db: Session = None, current_user: dict = None) -> StandardRes
     try:
         # 1. Ambil Inferences Dinamis dari Database
         df_db = pd.DataFrame()
-        if db:
-            # Ambil semua hasil secara global (descending)
-            db_results = db.query(SegmentationResult).order_by(SegmentationResult.created_at.desc()).all()
-            db_rows = []
-            seen_customers = set()
-            
-            for item in db_results:
-                c_id = str(item.customer_id) if item.customer_id else f"db-anon-{item.id}"
-                # Pastikan kita hanya menghitung data terbaru untuk setiap pelanggan
-                if c_id in seen_customers:
-                    continue
-                seen_customers.add(c_id)
-                
-                if item.lrfm:
-                    db_rows.append({
-                        "customer_id": c_id,
-                        "Segment": str(item.segment),
-                        "Monetary": float(item.lrfm.get("M", 0))
-                    })
-            df_db = pd.DataFrame(db_rows)
+        if db and current_user:
+            user_id = current_user.get("user_id")
+            if user_id:
+                sql = text("""
+                    SELECT customer_id, segment, (lrfm->>'M')::float AS monetary
+                    FROM (
+                        SELECT
+                            customer_id,
+                            segment,
+                            lrfm,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY customer_id
+                                ORDER BY created_at DESC
+                            ) AS rn
+                        FROM segmentation_results
+                        WHERE user_id = :user_id
+                    ) sub
+                    WHERE rn = 1
+                """)
+                rows = db.execute(sql, {"user_id": user_id}).all()
+                if rows:
+                    df_db = pd.DataFrame(
+                        rows, columns=["customer_id", "Segment", "Monetary"]
+                    )
+                    df_db["customer_id"] = df_db["customer_id"].astype(str)
+                    df_db["Monetary"] = pd.to_numeric(df_db["Monetary"], errors="coerce").fillna(0)
+                    df_db["Segment"] = df_db["Segment"].fillna("Unknown").astype(str)
 
-        # 2. Ambil Dataset Statis (CSV JD.com)
-        df_static = pd.DataFrame()
-        
-        if os.path.exists(SEGMENTED_DATASET_PATH):
-            df_static = pd.read_csv(SEGMENTED_DATASET_PATH)
-            if not df_static.empty:
-                df_static["customer_id"] = df_static["customer_id"].astype(str)
+        df_static = _get_static_segmented_df()
+        if not df_static.empty and "Monetary" not in df_static.columns:
+            df_static["Monetary"] = 0.0
 
-        # 3. Gabungkan Data Tanpa Duplikat
         if not df_db.empty and not df_static.empty:
-            df = pd.concat([df_db, df_static], ignore_index=True)
+            df = pd.concat([df_db, df_static[["customer_id", "Segment", "Monetary"]]], ignore_index=True)
             df = df.drop_duplicates(subset=["customer_id"], keep="first")
         elif not df_db.empty:
             df = df_db
@@ -109,19 +149,19 @@ async def get_kpis(db: Session = None, current_user: dict = None) -> StandardRes
 
         # 4. Hitung Metrik Cerdas
         total_customers = len(df)
-        avg_monetary = df["Monetary"].mean() if "Monetary" in df.columns and not df["Monetary"].isna().all() else 0.0
-        
+        avg_monetary = df["Monetary"].mean() if not df["Monetary"].isna().all() else 0.0
+
         dominant_segment = "Belum Ada"
-        if "Segment" in df.columns and not df["Segment"].empty:
-            # Mengambil nilai string (modus) segmen terbanyak
-            dominant_segment = df["Segment"].mode()[0]
+        segment_series = df["Segment"].dropna()
+        if not segment_series.empty:
+            dominant_segment = segment_series.mode()[0]
 
         # 5. Susun Response KPI
         kpis = [
             KeyPerformanceIndicator(
                 title="Total Pelanggan Tersegmen",
                 value=float(total_customers),
-                trend=0.0 # Boleh dibiarkan 0 jika tidak ada perbandingan tren waktu lalu
+                trend=0.0
             ),
             KeyPerformanceIndicator(
                 title="Rata-rata Nilai Pelanggan (M)",
@@ -130,7 +170,7 @@ async def get_kpis(db: Session = None, current_user: dict = None) -> StandardRes
             ),
             KeyPerformanceIndicator(
                 title="Segmen Paling Dominan",
-                value=dominant_segment, # Menggunakan String!
+                value=dominant_segment,
                 trend=0.0
             ),
         ]
@@ -144,12 +184,12 @@ async def get_kpis(db: Session = None, current_user: dict = None) -> StandardRes
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-async def get_customer_chart_data(
+def get_customer_chart_data(
     target_date: Optional[date] = None,
     date_range: Literal["today", "last 7 days", "this month"] = "last 7 days"
 ) -> ChartDataResponse:
     try:
-        df = _load_dataset(RAW_DATASET_PATH)
+        df = _get_static_raw_df()  # dari cache, bukan re-read disk
         df = _prepare_transactions(df)
 
         min_date_env = os.getenv("MIN_DATE", "2018-03-01")
@@ -277,44 +317,39 @@ async def get_customer_data_list(
     current_user: dict = None,
 ) -> CustomerDataResponse:
     try:
-        # 1. Load Static CSV
-        df_static = _load_dataset(SEGMENTED_DATASET_PATH)
-        if not df_static.empty:
-            df_static["customer_id"] = df_static["customer_id"].astype(str)
-        else:
-            df_static = pd.DataFrame(columns=["customer_id", "Segment", "Frequency", "Monetary", "Length", "Recency"])
+        df_static = _get_static_segmented_df()  # dari cache
 
-        # 2. Load Dynamic DB Inferences
         df_db = pd.DataFrame()
         if db and current_user:
             user_id = current_user.get("user_id")
-            # Order by created_at desc so we keep the newest inference
-            db_results = db.query(SegmentationResult).filter(
-                SegmentationResult.user_id == user_id
-            ).order_by(SegmentationResult.created_at.desc()).all()
-            
-            db_rows = []
-            seen_customers = set()
-            
-            for item in db_results:
-                c_id = str(item.customer_id) if item.customer_id else f"db-anon-{item.id}"
-                
-                # Only take the latest inference for a specific customer
-                if c_id in seen_customers:
-                    continue
-                seen_customers.add(c_id)
-                
-                if item.lrfm:
-                    db_rows.append({
-                        "customer_id": c_id,
-                        "Segment": str(item.segment),
-                        "Frequency": float(item.lrfm.get("F", 0)),
-                        "Monetary": float(item.lrfm.get("M", 0)),
-                        "Length": float(item.lrfm.get("L", 0)),
-                        "Recency": float(item.lrfm.get("R", 0)),
-                    })
-            
-            df_db = pd.DataFrame(db_rows)
+
+            def _lrfm_field(key: str, label: str):
+                return cast(SegmentationResult.lrfm[key].astext, Float).label(label)
+
+            latest_subq = (
+                select(
+                    SegmentationResult.customer_id,
+                    SegmentationResult.segment,
+                    _lrfm_field("F", "frequency"),
+                    _lrfm_field("M", "monetary"),
+                    _lrfm_field("L", "length"),
+                    _lrfm_field("R", "recency"),
+                )
+                .where(SegmentationResult.user_id == user_id)
+                .distinct(SegmentationResult.customer_id)
+                .order_by(SegmentationResult.customer_id, SegmentationResult.created_at.desc())
+            ).subquery()
+
+            rows = db.execute(select(latest_subq)).all()
+            if rows:
+                df_db = pd.DataFrame(
+                    rows,
+                    columns=["customer_id", "Segment", "Frequency", "Monetary", "Length", "Recency"],
+                )
+                df_db["customer_id"] = df_db["customer_id"].astype(str)
+                for col in ["Frequency", "Monetary", "Length", "Recency"]:
+                    df_db[col] = pd.to_numeric(df_db[col], errors="coerce").fillna(0)
+                df_db["Segment"] = df_db["Segment"].fillna("Unknown").astype(str)
 
         # 3. Combine DataFrames
         if not df_db.empty and not df_static.empty:
@@ -325,11 +360,8 @@ async def get_customer_data_list(
         else:
             df = df_static
 
-        if "Segment" in df.columns:
-            segments = df["Segment"].fillna("").astype(str).unique().tolist()
-            segments = [s for s in segments if s != ""] 
-        else:
-            segments = []
+        # Ekstrak segments SETELAH cleaning (df_static & df_db sudah bersih dari cache/query)
+        segments = sorted(df["Segment"].dropna().unique().tolist()) if "Segment" in df.columns else []
             
         # 4. Apply Search Query
         if search:
@@ -379,7 +411,7 @@ async def get_customer_data_list(
         metadata = PaginationMetadata(
             currentPage=page,
             perPage=per_page,
-            totalPage=total_page,
+            totalPages=total_page,
             totalData=total_data,
             allSegments=segments
         )
@@ -397,8 +429,8 @@ async def get_customer_data_list(
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    
-async def get_segment_trends(
+
+def get_segment_trends(
     db: Session,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -406,52 +438,38 @@ async def get_segment_trends(
 ) -> StandardResponse[SegmentTrendResponse]:
     try:
         user_id = current_user.get("user_id") if current_user else None
- 
-        # 1. Ambil data DB — pakai transaction_date, fallback created_at
-        query = db.query(SegmentationResult)
+
+        stmt = select(
+            SegmentationResult.segment,
+            SegmentationResult.transaction_date,
+            SegmentationResult.created_at,
+        )
         if user_id:
-            query = query.filter(SegmentationResult.user_id == user_id)
- 
-        db_results = query.all()
-        db_rows = []
-        for item in db_results:
-            if item.transaction_date is not None:
-                effective_date = item.transaction_date  # sudah type date
-            else:
-                effective_date = item.created_at.date()  # datetime → date
- 
-            db_rows.append({
-                "segment": str(item.segment),
-                "date": effective_date,
-            })
- 
+            stmt = stmt.where(SegmentationResult.user_id == user_id)
+
+        rows = db.execute(stmt).all()
+        db_rows = [
+            {
+                "segment": str(seg),
+                "date": tx_date if tx_date is not None else created_at.date(),
+            }
+            for seg, tx_date, created_at in rows
+        ]
+
         df_db = pd.DataFrame(db_rows)
         if not df_db.empty:
             df_db["date"] = pd.to_datetime(df_db["date"], utc=True)
- 
-        # 2. Ambil static CSV
-        # Prioritas kolom tanggal: last_transaction_date > LastTransactionDate > JoinedDate
+
         df_static = pd.DataFrame()
-        if os.path.exists(SEGMENTED_DATASET_PATH):
-            df_raw = pd.read_csv(SEGMENTED_DATASET_PATH)
- 
-            if not df_raw.empty and "Segment" in df_raw.columns:
-                date_col_candidates = [
-                    "last_transaction_date",
-                    "LastTransactionDate",
-                    "JoinedDate",  # fallback terakhir, semantically kurang tepat tapi tetap ada data
-                ]
-                date_col = next(
-                    (c for c in date_col_candidates if c in df_raw.columns),
-                    None
-                )
- 
-                if date_col:
-                    df_raw["date"] = pd.to_datetime(df_raw[date_col], errors="coerce").dt.tz_localize("UTC")
-                    df_static = df_raw[["Segment", "date"]].rename(columns={"Segment": "segment"})
-                    df_static = df_static.dropna(subset=["date"])
- 
-        # 3. Gabungkan DB + Static
+        df_raw_static = _get_static_segmented_df()  # dari cache
+        if not df_raw_static.empty and "Segment" in df_raw_static.columns:
+            date_col_candidates = ["last_transaction_date", "LastTransactionDate", "JoinedDate"]
+            date_col = next((c for c in date_col_candidates if c in df_raw_static.columns), None)
+            if date_col:
+                df_raw_static["date"] = pd.to_datetime(df_raw_static[date_col], errors="coerce").dt.tz_localize("UTC")
+                df_static = df_raw_static[["Segment", "date"]].rename(columns={"Segment": "segment"})
+                df_static = df_static.dropna(subset=["date"])
+
         if not df_static.empty and not df_db.empty:
             df = pd.concat([df_db, df_static], ignore_index=True)
         elif not df_db.empty:

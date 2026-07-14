@@ -22,7 +22,7 @@ class CustomerData(BaseModel):
 class PaginationMetadata(BaseModel):
     currentPage: int
     perPage: int
-    totalPage: int
+    totalPages: int
     totalData: int
     allSegments: List[str]
 
