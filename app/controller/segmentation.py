@@ -4,6 +4,7 @@ import uuid
 import json
 import numpy as np
 import pandas as pd
+import gc
 from typing import List, Optional, Union
 from datetime import date, datetime, timezone
 from fastapi import HTTPException, UploadFile, BackgroundTasks
@@ -30,6 +31,9 @@ from app.shared.transaction_manager import TransactionManager
 from app.models.segmentation_result import SegmentationResult
 
 SEGMENTED_DATASET_PATH = os.path.join(os.getcwd(), "static", "dataset", "segmented_data.csv")
+CHUNK_SIZE = 50_000               # rows per chunk for background / distribution
+MAX_SCATTER_POINTS = 1000         # max points shown in scatter plot
+DIRECT_PROCESS_CUSTOMERS = 500    # threshold: ≤ this → inline, > → background
 
 
 def _serialize_lrfm(lrfm: Optional[LRFMCalculated]) -> Optional[dict]:
@@ -103,25 +107,6 @@ def _build_segmentation_response(row: pd.Series) -> SegmentationResponse:
 		),
 	)
 
-def _parse_uploaded_file(file: UploadFile, contents: bytes) -> pd.DataFrame:
-	if not file.filename:
-		raise HTTPException(status_code=400, detail="Nama file tidak ditemukan.")
-
-	ext = file.filename.split(".")[-1].lower()
-	if ext == "csv":
-		return pd.read_csv(io.BytesIO(contents))
-	if ext in {"xlsx", "xls"}:
-		return pd.read_excel(io.BytesIO(contents))
-
-	raise HTTPException(
-		status_code=400,
-		detail=(
-			f"Format file '{ext}' tidak didukung. "
-			"Gunakan CSV atau Excel (.xlsx/.xls)."
-		),
-	)
-
-
 def process_file_background(
     contents: bytes, 
     filename: str, 
@@ -138,8 +123,8 @@ def process_file_background(
         # 1. Parse File
         ext = filename.split(".")[-1].lower()
         if ext == "csv":
-            df_raw = pd.read_csv(io.BytesIO(contents))
-        elif ext in {"xlsx", "xls"}:
+            df_raw = pd.read_csv(io.BytesIO(contents), low_memory=False)
+        elif ext in ("xlsx", "xls"):
             df_raw = pd.read_excel(io.BytesIO(contents))
         else:
             print(f"Format tidak didukung: {ext}")
@@ -149,88 +134,165 @@ def process_file_background(
         if mapping_str:
             mapping_dict = json.loads(mapping_str)
             rename_rules = {v: k for k, v in mapping_dict.items() if v}
-            df_raw = df_raw.rename(columns=rename_rules)
-            
-            required_cols = [c for c in ["customer_id", "transaction_date", "invoice_id", "amount"] if c in df_raw.columns]
-            df_mapped = df_raw[required_cols].copy()
+            df_raw.rename(columns=rename_rules, inplace=True)
         else:
-            df_mapped = auto_map_columns(df_raw)
+            df_raw = auto_map_columns(df_raw)
 
-        # 3. Ekstrak LRFM
-        df_lrfm = extract_lrfm(df_mapped)
-
-        # 4. Handle Tanggal Transaksi (Dioptimasi tanpa iterrows)
-        date_col = next((c for c in df_mapped.columns if "date" in c.lower()), None)
-        if date_col and "customer_id" in df_mapped.columns:
-            df_mapped["_parsed_date"] = pd.to_datetime(df_mapped[date_col], format='mixed', errors="coerce")
-            date_per_cust = df_mapped.groupby("customer_id")["_parsed_date"].max()
-            
-            # Ekstrak tanggal massal dengan Pandas map (hitungan milidetik)
-            if 'customer_id' in df_lrfm.columns:
-                cust_ids = df_lrfm['customer_id'].astype(str)
-            else:
-                cust_ids = df_lrfm.index.astype(str)
-                
-            tx_dates_raw = cust_ids.map(date_per_cust)
-            tx_dates = [d.date() if pd.notna(d) else None for d in tx_dates_raw]
-            
-        elif date_col:
-            parsed = pd.to_datetime(df_mapped[date_col], errors="coerce")
-            global_max = parsed.max()
-            tx_dates = [global_max.date() if pd.notna(global_max) else None] * len(df_lrfm)
-        else:
-            tx_dates = [None] * len(df_lrfm)
-
-        # 5. ML INFERENCE BATCH (Vectorized - Super Cepat)
-        print(f"Mulai Prediksi Batch untuk {len(df_lrfm)} baris...")
-        df_results = segment_batch(df_lrfm)
-        
-        # 6. PERSIAPAN DATA UNTUK BULK INSERT
-        print("Menyiapkan Bulk Insert Database...")
-        db_records = []
-        
-        records_dict = df_results.reset_index().to_dict('records') 
-        
-        for i, row in enumerate(records_dict):
-            cust_id = str(row.get('customer_id', row.get('index', ''))) 
-            tx_date = tx_dates[i] if (tx_dates and i < len(tx_dates)) else None
-            
-            lrfm_data = {
-                "L": float(row['Length']),
-                "R": float(row['Recency']),
-                "F": float(row['Frequency']),
-                "M": float(row['Monetary'])
-            }
-            
-            db_records.append(
-                SegmentationResult(
-                    user_id=user_id,
-                    batch_id=batch_id,
-                    customer_id=cust_id,
-                    cluster=int(row['cluster']),
-                    pattern=str(row['pattern']),
-                    segment=str(row['segment']),
-                    recommendation=str(row['recommendation']),
-                    fuzzy_membership=row['fuzzy_membership'],
-                    lrfm=lrfm_data,
-                    source="file",
-                    transaction_date=tx_date,
-                )
+        # 3. Compute max transaction date per customer
+        date_col = next((c for c in df_raw.columns if "date" in c.lower()), None)
+        if date_col:
+            df_raw["_parsed_date"] = pd.to_datetime(
+                df_raw[date_col], format="mixed", errors="coerce"
             )
+            date_per_cust = df_raw.groupby("customer_id")["_parsed_date"].max()
+        else:
+            date_per_cust = pd.Series(dtype="datetime64[ns]")
 
-        # 7. bulk insert to db
-        print(f"Menyimpan {len(db_records)} data ke Database...")
-        db.bulk_save_objects(db_records)
-        db.commit() 
-        print(f"Batch {batch_id} SELESAI TOTAL!")
+        # 4. Build LRFM and free raw data
+        df_lrfm = extract_lrfm(df_raw)
+        del df_raw
+        gc.collect()
+
+        # Attach transaction dates
+        df_lrfm["transaction_date"] = df_lrfm.index.map(date_per_cust)
+        df_lrfm["transaction_date"] = df_lrfm["transaction_date"].apply(
+            lambda d: d.date() if pd.notna(d) else None
+        )
+
+        # 5. Chunked inference + DB insert
+        total_rows = len(df_lrfm)
+        for start in range(0, total_rows, CHUNK_SIZE):
+            chunk = df_lrfm.iloc[start : start + CHUNK_SIZE].copy()
+            df_results = segment_batch(chunk)
+
+            db_records = []
+            for idx, row in df_results.iterrows():
+                cust_id = str(idx) if idx else f"anon-{start}"
+                tx_date = row.get("transaction_date")
+                if pd.isna(tx_date):
+                    tx_date = None
+
+                lrfm_dict = {
+                    "L": float(row["Length"]),
+                    "R": float(row["Recency"]),
+                    "F": float(row["Frequency"]),
+                    "M": float(row["Monetary"]),
+                }
+
+                db_records.append(
+                    SegmentationResult(
+                        user_id=user_id,
+                        batch_id=batch_id,
+                        customer_id=cust_id,
+                        cluster=int(row["cluster"]),
+                        pattern=str(row["pattern"]),
+                        segment=str(row["segment"]),
+                        recommendation=str(row["recommendation"]),
+                        fuzzy_membership=row["fuzzy_membership"],
+                        lrfm=lrfm_dict,
+                        source="file",
+                        transaction_date=tx_date,
+                    )
+                )
+
+            db.bulk_save_objects(db_records)
+            db.commit()
+            del db_records, df_results, chunk
+            gc.collect()
+
+        print(f"Background batch {batch_id} finished successfully.")
 
     except Exception as exc:
-        print(f"Error pada background task {batch_id}: {exc}")
+        print(f"Error in background task {batch_id}: {exc}")
         db.rollback()
     finally:
         db.close()
-        
-        
+
+
+# ---------------------------------------------------------------------
+#  Inline processing for small files (returns results immediately)
+# ---------------------------------------------------------------------
+def _process_file_inline(
+    contents: bytes,
+    filename: str,
+    mapping_str: str,
+    batch_id: str,
+    user_id: Optional[int],
+    db: Session,
+) -> Union[SegmentationResponse, BatchSegmentationResponse]:
+    """Process file synchronously, store in DB, and return segmentation data."""
+    ext = filename.split(".")[-1].lower()
+    if ext == "csv":
+        df_raw = pd.read_csv(io.BytesIO(contents), low_memory=False)
+    elif ext in ("xlsx", "xls"):
+        df_raw = pd.read_excel(io.BytesIO(contents))
+    else:
+        raise HTTPException(status_code=400, detail=f"Format {ext} tidak didukung")
+
+    # Mapping
+    if mapping_str:
+        mapping_dict = json.loads(mapping_str)
+        rename_rules = {v: k for k, v in mapping_dict.items() if v}
+        df_raw.rename(columns=rename_rules, inplace=True)
+    else:
+        df_raw = auto_map_columns(df_raw)
+
+    # Extract LRFM
+    df_lrfm = extract_lrfm(df_raw)
+    del df_raw; gc.collect()
+
+    # Single customer?
+    if len(df_lrfm) == 1:
+        row = df_lrfm.iloc[0]
+        result = segment_single(
+            l=float(row["Length"]),
+            r=float(row["Recency"]),
+            f=float(row["Frequency"]),
+            m=float(row["Monetary"]),
+        )
+        seg_resp = SegmentationResponse(
+            customer_id=str(row.get("customer_id", row.name)),
+            cluster=result["cluster"],
+            pattern=result["pattern"],
+            segment=result["segment"],
+            recommendation=result["recommendation"],
+            fuzzy_membership=result["fuzzy_membership"],
+            lrfm_calculated=LRFMCalculated(
+                L=float(row["Length"]), R=float(row["Recency"]),
+                F=float(row["Frequency"]), M=float(row["Monetary"]),
+            ),
+        )
+        _persist_results(db, user_id, [seg_resp], "file", batch_id)
+        return seg_resp
+
+    # Batch inference
+    df_results = segment_batch(df_lrfm)
+    responses = []
+    for idx, row in df_results.iterrows():
+        cust_id = str(idx) if idx else f"anon-{batch_id}"
+        seg = SegmentationResponse(
+            customer_id=cust_id,
+            cluster=int(row["cluster"]),
+            pattern=str(row["pattern"]),
+            segment=str(row["segment"]),
+            recommendation=str(row["recommendation"]),
+            fuzzy_membership=row["fuzzy_membership"],
+            lrfm_calculated=LRFMCalculated(
+                L=float(row["Length"]), R=float(row["Recency"]),
+                F=float(row["Frequency"]), M=float(row["Monetary"]),
+            ),
+        )
+        responses.append(seg)
+
+    _persist_results(db, user_id, responses, "file", batch_id)
+    return BatchSegmentationResponse(
+        status="success",
+        total_customers=len(responses),
+        batch_id=batch_id,
+        data=responses,
+    )
+
+
 async def segment_from_lrfm(
 	customer: CustomerInput,
 	db: Optional[Session] = None,
@@ -333,8 +395,33 @@ async def segment_from_file(
         
         user_id = current_user.get("user_id") if current_user else None
         batch_id = str(uuid.uuid4())
+        ext = file.filename.split(".")[-1].lower()
 
-        # Lempar proses file mentahnya ke fungsi background di atas
+        # Quick estimation of customer count – read first chunks
+        if ext == "csv":
+            # Use chunks to count rows without loading entire file into memory
+            reader = pd.read_csv(io.BytesIO(contents), chunksize=1000)
+            total_rows = 0
+            for chunk in reader:
+                total_rows += len(chunk)
+                if total_rows > DIRECT_PROCESS_CUSTOMERS:
+                    break
+        else:
+            # For Excel we cannot estimate easily; treat as small file (or you could default to background)
+            # Here we'll fallback to inline; if it's huge it may OOM – adjust threshold accordingly.
+            total_rows = 0  # will force inline; you may want to add a size check
+
+        if total_rows <= DIRECT_PROCESS_CUSTOMERS:
+            # Process immediately
+            result = _process_file_inline(contents, file.filename, mapping, batch_id, user_id, db)
+            return StandardResponse(
+                code=200,
+                error=False,
+                message="Segmentasi selesai",
+                data=result.model_dump() if hasattr(result, "model_dump") else result,
+            )
+
+        # Large file → background
         if background_tasks:
             background_tasks.add_task(
                 process_file_background,
@@ -342,7 +429,7 @@ async def segment_from_file(
                 filename=file.filename,
                 mapping_str=mapping,
                 batch_id=batch_id,
-                user_id=user_id
+                user_id=user_id,
             )
 
         # Langsung balas sukses tanpa perlu nunggu komputasi selesai
@@ -365,154 +452,181 @@ async def segment_from_file(
 
 async def get_segment_distribution(
     current_user: dict,
-    db: Session
+    db: Session,
 ) -> StandardResponse[DistributionResponse]:
-	try:
-		# 1. Load static dataset
-		df_static = pd.DataFrame()
-		if os.path.exists(SEGMENTED_DATASET_PATH):
-			df_static = pd.read_csv(SEGMENTED_DATASET_PATH)
-			df_static["customer_id"] = df_static["customer_id"].astype(str)
+    try:
+        user_id = current_user.get("user_id")
 
-		# 2. Fetch dynamic inference dataset from DB
-		user_id = current_user.get("user_id")
-		db_results = db.query(SegmentationResult).filter(SegmentationResult.user_id == user_id).all()
-		
-		db_rows = []
-		for item in db_results:
-			if item.lrfm:
-				db_rows.append({
-					"customer_id": str(item.customer_id) if item.customer_id else f"db-anon-{item.id}",
-					"Length": float(item.lrfm.get("L", 0)),
-					"Recency": float(item.lrfm.get("R", 0)),
-					"Frequency": float(item.lrfm.get("F", 0)),
-					"Monetary": float(item.lrfm.get("M", 0)),
-					"Cluster": int(item.cluster),
-					"Segment": str(item.segment)
-				})
-		df_db = pd.DataFrame(db_rows)
-		if not df_db.empty:
-			df_db["customer_id"] = df_db["customer_id"].astype(str)
+        # 1. Load DB inferences (small)
+        db_results = db.query(SegmentationResult).filter(SegmentationResult.user_id == user_id).all()
 
-		# 3. Combine for ACCURATE TABLE METRICS (All 400k+ data points)
-		if not df_static.empty and not df_db.empty:
-			df_combined = pd.concat([df_db, df_static], ignore_index=True)
-			df_combined = df_combined.drop_duplicates(subset=["customer_id"], keep="first")
-		elif not df_db.empty:
-			df_combined = df_db
-		elif not df_static.empty:
-			df_combined = df_static
-		else:
-			raise HTTPException(status_code=400, detail="No data available for distribution.")
+        db_rows = []
+        for item in db_results:
+            if item.lrfm:
+                db_rows.append({
+                    "customer_id": str(item.customer_id) if item.customer_id else f"db-anon-{item.id}",
+                    "Length": float(item.lrfm.get("L", 0)),
+                    "Recency": float(item.lrfm.get("R", 0)),
+                    "Frequency": float(item.lrfm.get("F", 0)),
+                    "Monetary": float(item.lrfm.get("M", 0)),
+                    "Cluster": int(item.cluster),
+                    "Segment": str(item.segment),
+                })
+        df_db = pd.DataFrame(db_rows) if db_rows else pd.DataFrame(
+            columns=["customer_id", "Length", "Recency", "Frequency", "Monetary", "Cluster", "Segment"]
+        )
+        if not df_db.empty:
+            df_db["customer_id"] = df_db["customer_id"].astype("string")
+            for col in ["Length", "Recency", "Frequency", "Monetary"]:
+                df_db[col] = pd.to_numeric(df_db[col], downcast="float")
+            df_db["Cluster"] = df_db["Cluster"].astype("int8")
 
-		max_frequency_threshold = 10
-		df_full = df_combined[df_combined["Frequency"] <= max_frequency_threshold]
-		
-		if df_full.empty:
-			raise HTTPException(status_code=400, detail="No data available after filtering high frequency outliers.")
+        # 2. Read static CSV in chunks, accumulate aggregates and reservoir sample
+        agg_dict = {}
+        total_count = 0
+        sumR = sumF = sumM = 0.0
+        reservoir = []
+        rng = np.random.default_rng(42)
 
-		# 4. Calculate aggregate metrics per segment
-		agg_df = df_full.groupby(["Cluster", "Segment"]).agg({
-			"customer_id": "count",
-			"Recency": "mean",
-			"Frequency": "mean",
-			"Monetary": "mean",
-		}).reset_index()
+        if not os.path.exists(SEGMENTED_DATASET_PATH):
+            # No static data? Just use DB
+            df_static_empty = pd.DataFrame()
+        else:
+            csv_sample = pd.read_csv(SEGMENTED_DATASET_PATH, nrows=1)
+            has_cluster = "Cluster" in csv_sample.columns
+            dtype_dict = {
+                "customer_id": "string",
+                "Segment": "category",
+                "Frequency": "float32",
+                "Monetary": "float32",
+                "Length": "float32",
+                "Recency": "float32",
+            }
+            if has_cluster:
+                dtype_dict["Cluster"] = "Int8"
 
-		cluster_colors = {
-			0: "#ef4444",  # Uncertain Lost Customers
-			1: "#06b6d4",  # Platinum Customers
-			2: "#f97316",  # Dormant Lost Customers
-			3: "#22c55e",  # High Value Loyal Customers
-		}
+            reader = pd.read_csv(
+                SEGMENTED_DATASET_PATH,
+                dtype=dtype_dict,
+                chunksize=CHUNK_SIZE,
+                low_memory=False,
+            )
 
-		segments = []
-		for _, row in agg_df.iterrows():
-			cluster_val = int(row["Cluster"])
-			segments.append(
-				ClusterAggregated(
-					id=str(cluster_val),
-					name=str(row["Segment"]),
-					userCount=int(row["customer_id"]),
-					avgRecency=float(row["Recency"]),
-					avgFrequency=float(row["Frequency"]),
-					avgMonetary=float(row["Monetary"]),
-					color=cluster_colors.get(cluster_val, "#94a3b8"),
-					description=f"Customers belonging to the {row['Segment']} segment based on their transaction behavior."
-				)
-			)
+            for chunk in reader:
+                chunk = chunk[chunk["Frequency"] <= 10]
+                if not df_db.empty:
+                    chunk = chunk[~chunk["customer_id"].isin(df_db["customer_id"])]
+                if chunk.empty:
+                    continue
 
-		all_segment = ClusterAggregated(
-			id="all",
-			name="All Customers",
-			userCount=len(df_full),
-			avgRecency=float(df_full["Recency"].mean()),
-			avgFrequency=float(df_full["Frequency"].mean()),
-			avgMonetary=float(df_full["Monetary"].mean()),
-			color="#18181b",
-			description="Global overview containing all segmented customers."
-		)
+                if not has_cluster:
+                    chunk["Cluster"] = 0
 
-		all_segment_data = [all_segment] + segments
+                for (cluster, seg), grp in chunk.groupby(["Cluster", "Segment"]):
+                    cnt = len(grp)
+                    key = (int(cluster), str(seg))
+                    if key not in agg_dict:
+                        agg_dict[key] = {"count": 0, "sumR": 0.0, "sumF": 0.0, "sumM": 0.0}
+                    agg_dict[key]["count"] += cnt
+                    agg_dict[key]["sumR"] += grp["Recency"].sum()
+                    agg_dict[key]["sumF"] += grp["Frequency"].sum()
+                    agg_dict[key]["sumM"] += grp["Monetary"].sum()
 
-		# 5. Prepare scatter data with sampling to max 1000 points for performance
-		target_sample_size = 1000
-		
-		# Filter the separate datasets
-		df_db_filtered = df_db[df_db["Frequency"] <= max_frequency_threshold] if not df_db.empty else pd.DataFrame()
-		df_static_filtered = df_static[df_static["Frequency"] <= max_frequency_threshold] if not df_static.empty else pd.DataFrame()
-		
-		# Remove DB duplicates from static pool
-		if not df_db_filtered.empty and not df_static_filtered.empty:
-			df_static_filtered = df_static_filtered[~df_static_filtered["customer_id"].isin(df_db_filtered["customer_id"])]
+                total_count += len(chunk)
+                sumR += chunk["Recency"].sum()
+                sumF += chunk["Frequency"].sum()
+                sumM += chunk["Monetary"].sum()
 
-		# Rule 1: Always include 100% of the live inferred DB data
-		df_scatter_parts = [df_db_filtered] if not df_db_filtered.empty else []
-		current_db_count = len(df_db_filtered)
+                # Reservoir sampling
+                for _, row in chunk.iterrows():
+                    row_dict = row.to_dict()
+                    if not has_cluster:
+                        row_dict["Cluster"] = 0
+                    if len(reservoir) < MAX_SCATTER_POINTS:
+                        reservoir.append(row_dict)
+                    else:
+                        j = rng.integers(0, total_count)
+                        if j < MAX_SCATTER_POINTS:
+                            reservoir[j] = row_dict
 
-		# Rule 2: Fill the remaining slots with random data from the 400k static set
-		remaining_slots = max(0, target_sample_size - current_db_count)
-		
-		if remaining_slots > 0 and not df_static_filtered.empty:
-			if len(df_static_filtered) <= remaining_slots:
-				df_scatter_parts.append(df_static_filtered.copy())
-			else:
-				fraction = remaining_slots / len(df_static_filtered)
-				df_static_sampled = df_static_filtered.groupby("Cluster", group_keys=False).apply(
-					lambda x: x.sample(frac=fraction, random_state=42)
-				).copy()
-				df_scatter_parts.append(df_static_sampled)
+        # 3. Add DB data to aggregates (DB data is small)
+        if not df_db.empty:
+            df_db_filtered = df_db[df_db["Frequency"] <= 10]
+            for (cluster, seg), grp in df_db_filtered.groupby(["Cluster", "Segment"]):
+                cnt = len(grp)
+                key = (int(cluster), str(seg))
+                if key not in agg_dict:
+                    agg_dict[key] = {"count": 0, "sumR": 0.0, "sumF": 0.0, "sumM": 0.0}
+                agg_dict[key]["count"] += cnt
+                agg_dict[key]["sumR"] += grp["Recency"].sum()
+                agg_dict[key]["sumF"] += grp["Frequency"].sum()
+                agg_dict[key]["sumM"] += grp["Monetary"].sum()
 
-		# Combine them
-		df_scatter = pd.concat(df_scatter_parts, ignore_index=True) if df_scatter_parts else pd.DataFrame()
+            total_count += len(df_db_filtered)
+            sumR += df_db_filtered["Recency"].sum()
+            sumF += df_db_filtered["Frequency"].sum()
+            sumM += df_db_filtered["Monetary"].sum()
 
-		jitter_r = np.random.uniform(-0.4, 0.4, size=len(df_scatter))
-		jitter_f = np.random.uniform(-0.3, 0.3, size=len(df_scatter))
+            for _, row in df_db_filtered.iterrows():
+                if len(reservoir) < MAX_SCATTER_POINTS:
+                    reservoir.append(row.to_dict())
+                else:
+                    j = rng.integers(0, MAX_SCATTER_POINTS)
+                    reservoir[j] = row.to_dict()
 
-		scatter_data = []
-		for i, (_, row) in enumerate(df_scatter.iterrows()):
-			scatter_data.append(ScatterDataPoint(
-				customer_id=str(row["customer_id"]),
-				recency=max(0.1, float(row["Recency"]) + jitter_r[i]),
-				frequency=max(0.1, float(row["Frequency"]) + jitter_f[i]),
-				monetary=float(row["Monetary"]),
-				clusterId=str(row["Cluster"]),
-			))
+        if total_count == 0:
+            raise HTTPException(status_code=400, detail="No data available for distribution.")
 
-		return StandardResponse(
-			code=200,
-			error=False,
-			message="Distribution fetched successfully",
-			data=DistributionResponse(
-				segments=segments,
-				allSegmentData=all_segment_data,
-				scatterData=scatter_data,
-			),
-		)
-	except HTTPException:
-		raise
-	except Exception as exc:
-		raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # 4. Build segment summaries
+        cluster_colors = {0: "#ef4444", 1: "#06b6d4", 2: "#f97316", 3: "#22c55e"}
+        segments = []
+        for (cluster, seg), vals in agg_dict.items():
+            cnt = vals["count"]
+            segments.append(ClusterAggregated(
+                id=str(cluster),
+                name=seg,
+                userCount=cnt,
+                avgRecency=round(vals["sumR"] / cnt, 2),
+                avgFrequency=round(vals["sumF"] / cnt, 2),
+                avgMonetary=round(vals["sumM"] / cnt, 2),
+                color=cluster_colors.get(cluster, "#94a3b8"),
+                description=f"Customers in the {seg} segment.",
+            ))
+
+        all_segment = ClusterAggregated(
+            id="all", name="All Customers",
+            userCount=total_count,
+            avgRecency=round(sumR / total_count, 2),
+            avgFrequency=round(sumF / total_count, 2),
+            avgMonetary=round(sumM / total_count, 2),
+            color="#18181b",
+            description="Global overview of all segmented customers.",
+        )
+        all_segment_data = [all_segment] + segments
+
+        # 5. Build scatter data from reservoir (with jitter)
+        scatter_data = []
+        jitter_r = np.random.uniform(-0.4, 0.4, size=len(reservoir))
+        jitter_f = np.random.uniform(-0.3, 0.3, size=len(reservoir))
+        for i, row in enumerate(reservoir):
+            scatter_data.append(ScatterDataPoint(
+                customer_id=str(row["customer_id"]),
+                recency=max(0.1, float(row["Recency"]) + jitter_r[i]),
+                frequency=max(0.1, float(row["Frequency"]) + jitter_f[i]),
+                monetary=float(row["Monetary"]),
+                clusterId=str(row.get("Cluster", "")),
+            ))
+
+        return StandardResponse(
+            code=200, error=False,
+            message="Distribution fetched successfully",
+            data=DistributionResponse(segments=segments, allSegmentData=all_segment_data, scatterData=scatter_data),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 async def get_segmentation_history(

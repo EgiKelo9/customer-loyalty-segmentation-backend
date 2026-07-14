@@ -2,14 +2,14 @@ from typing import Any, Dict, List, Union
 from fastapi import APIRouter, Depends, File, UploadFile, BackgroundTasks, Form
 from sqlalchemy.orm import Session
 from app.controller.segmentation import (
-	segment_from_file as segment_from_file_controller,
-	segment_from_lrfm as segment_from_lrfm_controller,
-	segment_from_transactions as segment_from_transactions_controller,
-	get_segment_distribution as get_segment_distribution_controller,
-	get_segmentation_history as get_segmentation_history_controller,
-	get_segmentation_history_batches as get_segmentation_history_batches_controller,
- 	get_segmentation_history_by_batch_id as get_segmentation_history_by_batch_id_controller,
-  	get_customer_detail_in_batch_controller as get_customer_detail_in_batch_controller
+    segment_from_file as segment_from_file_controller,
+    segment_from_lrfm as segment_from_lrfm_controller,
+    segment_from_transactions as segment_from_transactions_controller,
+    get_segment_distribution as get_segment_distribution_controller,
+    get_segmentation_history as get_segmentation_history_controller,
+    get_segmentation_history_batches as get_segmentation_history_batches_controller,
+    get_segmentation_history_by_batch_id as get_segmentation_history_by_batch_id_controller,
+    get_customer_detail_in_batch_controller,
 )
 from app.schemas.segmentation import BatchHistoryItem, BatchSegmentationResponse, CustomerInput, SegmentationResponse, TransactionInput, DistributionResponse, SegmentationHistoryItem
 from app.schemas.base import StandardResponse
@@ -69,37 +69,33 @@ async def segment_from_transactions(
 ) -> StandardResponse[SegmentationResponse]:
 	return await segment_from_transactions_controller(transactions, db, current_user)
 
-@router.get(
-	"/transactions/upload",
-	response_model=StandardResponse[Dict[str, Any]],
-	responses={
-		422: {"model": StandardResponse[Dict[str, Any]], "description": "Validation Error"},
-		401: {"model": StandardResponse[dict], "description": "Unauthorized"}
-	},
-	summary="Segmentasi dari file CSV/Excel (1 atau banyak pelanggan)",
-)
 @router.post(
-	"/transactions/upload",
-	response_model=StandardResponse[Dict[str, Any]],
-	responses={
-		422: {"model": StandardResponse[Dict[str, Any]], "description": "Validation Error"},
-		401: {"model": StandardResponse[dict], "description": "Unauthorized"}
-	},
-	summary="Segmentasi dari file CSV/Excel (1 atau banyak pelanggan)",
+    "/transactions/upload",
+    response_model=StandardResponse[
+        Union[SegmentationResponse, BatchSegmentationResponse, Dict[str, Any]]
+    ],
+    responses={
+        422: {"model": StandardResponse[Dict[str, Any]], "description": "Validation Error"},
+        401: {"model": StandardResponse[dict], "description": "Unauthorized"},
+    },
+    summary="Segmentasi dari file CSV/Excel (1 atau banyak pelanggan)",
 )
 async def segment_from_file(
     background_tasks: BackgroundTasks,
-	file: UploadFile = File(..., description="File CSV atau Excel berisi data transaksi"),
- 	mapping: str = Form(None),
-	current_user: dict = Depends(get_current_user),
-	# db: Session = Depends(get_db),
-) -> StandardResponse[Union[SegmentationResponse, BatchSegmentationResponse]]:
-	return await segment_from_file_controller(
-		file=file,
-		mapping=mapping, 
-		background_tasks=background_tasks, 
-		current_user=current_user
-	)
+    file: UploadFile = File(..., description="File CSV atau Excel berisi data transaksi"),
+    mapping: str = Form(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StandardResponse[
+    Union[SegmentationResponse, BatchSegmentationResponse, Dict[str, Any]]
+]:
+    return await segment_from_file_controller(
+        file=file,
+        mapping=mapping,
+        background_tasks=background_tasks,
+        db=db,
+        current_user=current_user,
+    )
 
 @router.get(
     "/distribution",
