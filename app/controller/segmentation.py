@@ -311,7 +311,6 @@ async def segment_from_lrfm(
 			segment=result["segment"],
 			recommendation=result["recommendation"],
 			fuzzy_membership=result["fuzzy_membership"],
-			fuzzy_membership_raw=result["fuzzy_membership_raw"],
 		)
 		user_id = current_user.get("user_id") if current_user else None
 		batch_id = str(uuid.uuid4())

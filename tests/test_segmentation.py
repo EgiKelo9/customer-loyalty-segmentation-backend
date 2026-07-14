@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from fastapi import HTTPException
 from starlette.datastructures import UploadFile
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -206,7 +207,13 @@ def test_get_segment_distribution_success(monkeypatch):
     monkeypatch.setattr(segmentation_controller.os.path, "exists", lambda path: True)
     monkeypatch.setattr(segmentation_controller.pd, "read_csv", lambda path: dataset.copy())
 
-    response = run(segmentation_controller.get_segment_distribution())
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.all.return_value = []
+
+    response = run(segmentation_controller.get_segment_distribution(
+        current_user={"user_id": 1},
+        db=mock_db
+    ))
 
     assert response.code == 200
     assert response.error is False
@@ -220,8 +227,14 @@ def test_get_segment_distribution_success(monkeypatch):
 def test_get_segment_distribution_missing_file(monkeypatch):
     monkeypatch.setattr(segmentation_controller.os.path, "exists", lambda path: False)
 
-    with pytest.raises(HTTPException) as exc_info:
-        run(segmentation_controller.get_segment_distribution())
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.all.return_value = []
 
-    assert exc_info.value.status_code == 404
-    assert exc_info.value.detail == "Segmented dataset not found."
+    with pytest.raises(HTTPException) as exc_info:
+        run(segmentation_controller.get_segment_distribution(
+            current_user={"user_id": 1},
+            db=mock_db
+        ))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "No data available for distribution."
