@@ -29,11 +29,11 @@ router = APIRouter(prefix="/analytics", dependencies=[Depends(get_current_user)]
     },
     summary="Dapatkan ringkasan metrik profil pelanggan",
 )
-def kpi_endpoint(
+async def kpi_endpoint(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ) -> StandardResponse[KPIResponse]:
-    return get_kpis(db, current_user)
+    return await get_kpis(db, current_user)
 
 @router.get(
     "/charts",
@@ -61,7 +61,7 @@ def chart_endpoint(
     response_model=StandardResponse[CustomerDataResponse],
     summary="Get customer data list with pagination and filters",
 )
-def get_customers(
+async def get_customers(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(10, ge=1, le=100, description="Items per page"),
     search: Optional[str] = Query(None, description="Search by Customer ID"),
@@ -70,7 +70,7 @@ def get_customers(
     current_user: dict = Depends(get_current_user),
 ) -> StandardResponse[CustomerDataResponse]:
     # Pass db and current_user to the controller
-    return get_customer_data_list(page, per_page, search, segment, db, current_user)
+    return await get_customer_data_list(page, per_page, search, segment, db, current_user)
 
 @router.get(
     "/segment-trends",
