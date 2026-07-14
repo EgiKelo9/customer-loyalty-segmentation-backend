@@ -29,11 +29,11 @@ router = APIRouter(prefix="/analytics", dependencies=[Depends(get_current_user)]
     },
     summary="Dapatkan ringkasan metrik profil pelanggan",
 )
-async def kpi_endpoint(
+def kpi_endpoint(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ) -> StandardResponse[KPIResponse]:
-    return await get_kpis(db, current_user)
+    return get_kpis(db, current_user)
 
 @router.get(
     "/charts",
@@ -44,7 +44,7 @@ async def kpi_endpoint(
     },
     summary="Mendapatkan data grafik aktivitas pelanggan berdasarkan filter rentang",
 )
-async def chart_endpoint(
+def chart_endpoint(
     target_date: Optional[date] = Query(
         None, 
         description="Tanggal acuan utama analisis data (Format: YYYY-MM-DD)"
@@ -54,14 +54,14 @@ async def chart_endpoint(
         description="Rentang distribusi rentang waktu chart yang ingin diambil dari tanggal acuan"
     )
 ):
-    return await get_customer_chart_data(target_date=target_date, date_range=date_range)
+    return get_customer_chart_data(target_date=target_date, date_range=date_range)
 
 @router.get(
     "/customers",
     response_model=StandardResponse[CustomerDataResponse],
     summary="Get customer data list with pagination and filters",
 )
-async def get_customers(
+def get_customers(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(10, ge=1, le=100, description="Items per page"),
     search: Optional[str] = Query(None, description="Search by Customer ID"),
@@ -70,17 +70,17 @@ async def get_customers(
     current_user: dict = Depends(get_current_user),
 ) -> StandardResponse[CustomerDataResponse]:
     # Pass db and current_user to the controller
-    return await get_customer_data_list(page, per_page, search, segment, db, current_user)
+    return get_customer_data_list(page, per_page, search, segment, db, current_user)
 
 @router.get(
     "/segment-trends",
     response_model=StandardResponse[SegmentTrendResponse],
     summary="Get aggregated segment trends over a specific date range",
 )
-async def get_segment_trends_route(
+def get_segment_trends_route(
     start_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
     end_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ) -> StandardResponse[SegmentTrendResponse]:
-    return await get_segment_trends(db, start_date, end_date, current_user)
+    return get_segment_trends(db, start_date, end_date, current_user)
