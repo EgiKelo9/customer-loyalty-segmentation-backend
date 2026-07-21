@@ -3,6 +3,7 @@ venv
 .pytest_cache
 tests
 static/dataset/*
+!static/dataset/segmented_data.csv
 generate_segmented_data.py
 *.md
 .vscode
