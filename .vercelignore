@@ -1,0 +1,9 @@
+.venv
+venv
+.pytest_cache
+tests
+static/dataset/*
+generate_segmented_data.py
+*.md
+.vscode
+.git
