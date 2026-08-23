@@ -61,7 +61,7 @@ for col in features:
     lrfm_log[col] = np.log1p(lrfm_log[col])
 
 # Note: artifacts/scaler_lrfm.joblib is the one used in production inference
-features_log = lrfm_log[features].values
+features_log = lrfm_log[features]
 features_scaled = scaler.transform(features_log)  # shape: (n_customers, 4)
 
 # FCM predict requires shape (4, n_customers)
@@ -90,13 +90,12 @@ lrfm_df["Segment"] = lrfm_df["Pola"].apply(
 
 output_df = pd.DataFrame({
     "customer_id": lrfm_df["user_ID"].astype(str),
-    "Length": lrfm_df["length"].round(4),
-    "Recency": lrfm_df["recency"].round(4),
-    "Frequency": lrfm_df["frequency"].round(4),
-    "Monetary": lrfm_df["monetary"].round(4),
-    "Cluster": lrfm_df["Cluster"],
+    "Length": lrfm_df["length"].astype(int),
+    "Recency": lrfm_df["recency"].astype(int),
+    "Frequency": lrfm_df["frequency"].astype(int),
+    "Monetary": lrfm_df["monetary"].round(2),
     "Segment": lrfm_df["Segment"],
-    "last_transaction_date":  lrfm_df["last_order"].dt.date,
+    "last_transaction_date": lrfm_df["last_order"].dt.date,
 })
 
 os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
@@ -105,4 +104,4 @@ output_df.to_csv(OUTPUT_PATH, index=False)
 print(f"\n✅ Done! Saved to: {OUTPUT_PATH}")
 print(f"   Total rows: {len(output_df)}")
 print(f"\nCluster distribution:")
-print(output_df.groupby(["Cluster", "Segment"]).size().reset_index(name="count").to_string(index=False))
+print(lrfm_df.groupby(["Cluster", "Segment"]).size().reset_index(name="count").to_string(index=False))

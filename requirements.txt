@@ -21,10 +21,6 @@ python-multipart==0.0.28
 packaging==26.2
 openpyxl==3.1.5
 
-# --- Data Visualization ---
-matplotlib==3.8.3
-seaborn==0.13.2
-
 # --- Security ---
 passlib[bcrypt]>=1.7.4
 python-jose[cryptography]>=3.3.0
