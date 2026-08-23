@@ -17,7 +17,7 @@
         "L↓R↓F↓M↓": "Uncertain New Customers",
         "L↑R↓F↓M↓": "High Consumption Cost Customers",
         "L↑R↑F↓M↓": "Low Consumption Cost Customers",
-        "L↓R↑F↓M↓_v2": "Dormant Lost Customers"
+        "L↓R↑F↓M↓_v2": "Uncertain Lost Customers" 
     },
     "promo_map": {
         "High Value Loyal Customers": "Sampling, cashback",
@@ -34,8 +34,7 @@
         "Consumption Promotions Customers": "Cashback",
         "Uncertain New Customers": "Kupon, Buy One Get One Free",
         "High Consumption Cost Customers": "Bonus Packs",
-        "Low Consumption Cost Customers": "Bonus Packs, Kupon",
-        "Dormant Lost Customers": "Kupon, Bonus Packs"
+        "Low Consumption Cost Customers": "Bonus Packs, Kupon"
     },
     "cluster_pola_map": {
         "0": "L↓R↑F↓M↓",
